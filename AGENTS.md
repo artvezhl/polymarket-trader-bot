@@ -2,11 +2,25 @@
 
 ## Cursor Cloud specific instructions
 
-This repository (`polymarket-trader-bot`) is currently an empty project stub — it contains only a `README.md`.
+**Project:** Polymarket Trading Bot with Telegram management (Python 3.12, async).
 
-- **No source code, dependencies, build system, or test infrastructure** exist yet.
-- **No services to start.** There are no backend, frontend, or worker processes.
-- **No package manager configured.** No `package.json`, `requirements.txt`, `pyproject.toml`, or similar files.
-- **No linting, testing, or build commands** are available.
+### Services
 
-When code is added in the future, update this section with relevant dev environment setup notes, startup caveats, and testing instructions.
+| Service | Description | How to run |
+|---|---|---|
+| Trading Bot | Main application — scanner + executor + Telegram bot | `python main.py` (requires `.env` with secrets) |
+
+### Quick reference
+
+- **Lint:** `ruff check .`
+- **Tests:** `python -m pytest tests/ -v`
+- **Run bot:** `python main.py` (needs `TELEGRAM_BOT_TOKEN` and Polymarket API credentials in `.env`)
+
+### Non-obvious caveats
+
+- The Gamma API returns `outcomes`, `outcomePrices`, and `clobTokenIds` as **JSON-encoded strings** (e.g. `'["Yes", "No"]'`), not native lists. The parser in `trading/scanner.py` handles both JSON strings and CSV formats.
+- `py-clob-client` is synchronous — all CLOB calls are wrapped in `asyncio.to_thread()` inside `trading/executor.py`.
+- The bot **does not start trading automatically** on launch. An admin must send `/start_trading` via Telegram.
+- All secrets must be in `.env` (see `.env.example`). Required: `TELEGRAM_BOT_TOKEN`, `PRIVATE_KEY`, `POLYMARKET_API_KEY`, `POLYMARKET_API_SECRET`, `POLYMARKET_API_PASSPHRASE`.
+- SQLite database `bot.db` is created automatically on first run.
+- Virtual environment lives in `.venv/`. Activate with `source .venv/bin/activate`.

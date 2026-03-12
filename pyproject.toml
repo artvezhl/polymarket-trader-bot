@@ -1,0 +1,16 @@
+[project]
+name = "polymarket-trader-bot"
+version = "0.1.0"
+description = "Trading bot for Polymarket with Telegram management"
+requires-python = ">=3.11"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
