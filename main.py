@@ -35,6 +35,7 @@ class TradingEngine:
         if app.updater:
             await app.updater.start_polling(drop_pending_updates=True)
 
+        await self.tg_bot.register_commands()
         logger.info("Telegram bot started")
 
         tasks = [

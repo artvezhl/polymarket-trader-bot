@@ -8,9 +8,11 @@ from bot.notifications import (
     format_pnl,
     format_position_resolved,
     format_positions_list,
+    format_settings,
     format_status_report,
 )
 from database.models import BalanceLog, Trade, TradeStatus
+from utils.config import TradingConfig
 
 
 def _make_trade(**kwargs) -> Trade:
@@ -111,6 +113,42 @@ class TestFormatHistory:
         assert "🔵" in msg
         assert "✅" in msg
         assert "❌" in msg
+
+
+class TestFormatSettings:
+    def test_default_settings(self):
+        cfg = TradingConfig()
+        msg = format_settings(cfg)
+        assert "Настройки торговли" in msg
+        assert "5.0%" in msg
+        assert "1.0%" in msg
+        assert "$1.00" in msg
+        assert "$10.00" in msg
+        assert "$5,000" in msg
+        assert "50" in msg
+        assert "60с" in msg
+        assert "нет" in msg
+
+    def test_custom_settings(self):
+        cfg = TradingConfig(
+            max_probability=0.03,
+            bet_size_pct=0.02,
+            min_bet_usd=2.0,
+            max_bet_usd=20.0,
+            min_liquidity=15000,
+            max_open_positions=30,
+            scan_interval_sec=120,
+            skip_categories=["Sports", "Entertainment"],
+        )
+        msg = format_settings(cfg)
+        assert "3.0%" in msg
+        assert "2.0%" in msg
+        assert "$2.00" in msg
+        assert "$20.00" in msg
+        assert "$15,000" in msg
+        assert "30" in msg
+        assert "120с" in msg
+        assert "Sports, Entertainment" in msg
 
 
 class TestFormatPnl:

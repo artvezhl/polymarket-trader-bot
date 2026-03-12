@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from database.models import BalanceLog, Trade
+from utils.config import TradingConfig
 
 
 def format_new_trade(trade: Trade, deposit: float) -> str:
@@ -79,6 +80,24 @@ def format_history(trades: list[Trade]) -> str:
             f"   ${t.bet_usd:.2f} | {t.probability * 100:.1f}%{pnl_str}"
         )
     return "\n".join(lines)
+
+
+def format_settings(cfg: TradingConfig) -> str:
+    return (
+        f"⚙️ *Настройки торговли:*\n\n"
+        f"📉 Макс. вероятность: *{cfg.max_probability * 100:.1f}%*\n"
+        f"💵 Размер ставки: *{cfg.bet_size_pct * 100:.1f}%* от депозита\n"
+        f"📏 Мин. ставка: *${cfg.min_bet_usd:.2f}*\n"
+        f"📏 Макс. ставка: *${cfg.max_bet_usd:.2f}*\n"
+        f"💧 Мин. ликвидность: *${cfg.min_liquidity:,.0f}*\n"
+        f"📊 Макс. позиций: *{cfg.max_open_positions}*\n"
+        f"⏱ Интервал: *{cfg.scan_interval_sec}с*\n"
+        f"🚫 Исключения: *{', '.join(cfg.skip_categories) or 'нет'}*\n\n"
+        f"_Изменить:_ /set\\_max\\_prob, /set\\_bet\\_size,\n"
+        f"/set\\_min\\_bet, /set\\_max\\_bet,\n"
+        f"/set\\_max\\_positions, /set\\_liquidity,\n"
+        f"/set\\_interval"
+    )
 
 
 def format_pnl(pnl_today: float, pnl_week: float, pnl_total: float) -> str:
