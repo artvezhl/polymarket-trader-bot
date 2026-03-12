@@ -21,6 +21,9 @@
 - The Gamma API returns `outcomes`, `outcomePrices`, and `clobTokenIds` as **JSON-encoded strings** (e.g. `'["Yes", "No"]'`), not native lists. The parser in `trading/scanner.py` handles both JSON strings and CSV formats.
 - `py-clob-client` is synchronous — all CLOB calls are wrapped in `asyncio.to_thread()` inside `trading/executor.py`.
 - The bot **does not start trading automatically** on launch. An admin must send `/start_trading` via Telegram.
-- All secrets must be in `.env` (see `.env.example`). Required: `TELEGRAM_BOT_TOKEN`, `PRIVATE_KEY`, `POLYMARKET_API_KEY`, `POLYMARKET_API_SECRET`, `POLYMARKET_API_PASSPHRASE`.
+- When `admin_ids` in `config.yaml` is empty, **all Telegram users** can use commands (initial setup behavior). Set specific IDs to restrict access.
+- All secrets must be in `.env` (see `.env.example`). Required: `TELEGRAM_BOT_TOKEN`, `PRIVATE_KEY`, `POLYMARKET_API_KEY`, `POLYMARKET_API_SECRET`, `POLYMARKET_API_PASSPHRASE`. These are also available as Cursor Cloud secrets.
+- To generate `.env` from Cloud secrets: `envsubst < .env.example > .env` (or write manually).
 - SQLite database `bot.db` is created automatically on first run.
 - Virtual environment lives in `.venv/`. Activate with `source .venv/bin/activate`.
+- `python3.12-venv` system package is required to create the venv (pre-installed in Cloud snapshot).
