@@ -43,7 +43,11 @@ class TestLoadConfig:
         assert config.reporting.status_interval_min == 30
         assert config.telegram.admin_ids == [111, 222]
 
-    def test_load_secrets_from_env(self, tmp_path):
+    def test_load_secrets_from_env(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+        monkeypatch.delenv("PRIVATE_KEY", raising=False)
+        monkeypatch.delenv("POLYMARKET_API_KEY", raising=False)
+
         env_file = tmp_path / ".env"
         env_file.write_text(
             "TELEGRAM_BOT_TOKEN=test_bot_token\n"

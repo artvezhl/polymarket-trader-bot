@@ -41,7 +41,7 @@ class TelegramBot:
         @wraps(func)
         async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             user_id = update.effective_user.id if update.effective_user else 0
-            if user_id not in self.config.telegram.admin_ids:
+            if self.config.telegram.admin_ids and user_id not in self.config.telegram.admin_ids:
                 if update.message:
                     await update.message.reply_text("⛔ Доступ запрещён")
                 return
