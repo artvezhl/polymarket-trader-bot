@@ -4,6 +4,7 @@ import asyncio
 import signal
 import sys
 from datetime import datetime
+from pathlib import Path
 
 from bot.notifications import (
     format_new_trade,
@@ -226,6 +227,7 @@ class TradingEngine:
 
 
 def main() -> None:
+    Path("data").mkdir(exist_ok=True)
     config = load_config()
 
     if not config.telegram.bot_token:

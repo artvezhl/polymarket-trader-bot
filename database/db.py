@@ -52,7 +52,7 @@ MIGRATIONS = [
 
 
 class Database:
-    def __init__(self, db_path: str = "bot.db"):
+    def __init__(self, db_path: str = "data/bot.db"):
         self._db_path = db_path
         self._conn: aiosqlite.Connection | None = None
 

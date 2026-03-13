@@ -214,15 +214,10 @@ def format_scan_result(
         lines.append(f"📄 *Стр. {page + 1}/{total_pages}* "
                       f"({start + 1}-{min(end, total)} из {total}):\n")
         for i, opp in enumerate(page_items, start + 1):
-            min_ord = (
-                f" | мин: ${opp.min_order_size:.0f}"
-                if opp.min_order_size > 0
-                else ""
-            )
             lines.append(
                 f"{i}. [{opp.probability * 100:.1f}%] "
                 f"_{opp.question[:42]}_\n"
-                f"   лик: ${opp.liquidity:,.0f}{min_ord}"
+                f"   лик: ${opp.liquidity:,.0f}"
             )
     else:
         lines.append("Нет результатов на этой странице.")
