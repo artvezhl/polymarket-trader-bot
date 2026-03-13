@@ -19,6 +19,7 @@ from trading.portfolio import PortfolioManager
 from trading.scanner import MarketScanner
 from utils.config import AppConfig, load_config
 from utils.logger import logger
+from utils.wallet import WalletManager
 
 
 class TradingEngine:
@@ -28,7 +29,15 @@ class TradingEngine:
         self.scanner = MarketScanner(config.trading)
         self.portfolio = PortfolioManager(self.db)
         self.executor = TradeExecutor(config, self.db)
-        self.tg_bot = TelegramBot(config, self.db, self.portfolio, self.executor)
+        self.wallet: WalletManager | None = None
+        if config.secrets.private_key:
+            self.wallet = WalletManager(
+                config.secrets.private_key,
+                config.secrets.polygon_rpc_url,
+            )
+        self.tg_bot = TelegramBot(
+            config, self.db, self.portfolio, self.executor, self.wallet
+        )
         self._shutdown = asyncio.Event()
 
     async def start(self) -> None:
@@ -100,9 +109,15 @@ class TradingEngine:
         existing_ids = await self.portfolio.get_existing_market_ids()
         opportunities = await self.scanner.scan(existing_ids)
 
+        deposit = 0.0
+        if self.wallet:
+            deposit = await self.wallet.get_usdc_balance()
+        if deposit < self.config.trading.min_bet_usd:
+            logger.debug("USDC balance too low ($%.2f), skipping", deposit)
+            return
+
         slots = self.config.trading.max_open_positions - open_count
         for opp in opportunities[:slots]:
-            deposit = 1000.0
             trade = await self.executor.execute_trade(opp, deposit)
             if trade:
                 msg = format_new_trade(trade, deposit)
@@ -134,7 +149,10 @@ class TradingEngine:
                 pass
 
             try:
-                balance = await self.portfolio.log_balance(0)
+                free_usdc = 0.0
+                if self.wallet:
+                    free_usdc = await self.wallet.get_usdc_balance()
+                balance = await self.portfolio.log_balance(free_usdc)
                 open_count = await self.portfolio.get_open_positions_count()
                 trades_today = await self.db.get_trades_count_today()
                 today = datetime.now().replace(
@@ -143,7 +161,8 @@ class TradingEngine:
                 pnl_today = await self.db.get_pnl_since(today)
 
                 msg = format_status_report(
-                    balance, open_count, trades_today, pnl_today, self.tg_bot.is_trading
+                    balance, open_count, trades_today, pnl_today,
+                    self.tg_bot.is_trading,
                 )
                 await self.tg_bot.send_message(msg)
             except Exception as e:

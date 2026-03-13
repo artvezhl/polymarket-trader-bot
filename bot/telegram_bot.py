@@ -21,6 +21,7 @@ from trading.executor import TradeExecutor
 from trading.portfolio import PortfolioManager
 from utils.config import AppConfig
 from utils.logger import logger
+from utils.wallet import WalletManager
 
 HandlerFunc = Callable[..., Coroutine[Any, Any, None]]
 
@@ -54,11 +55,13 @@ class TelegramBot:
         db: Database,
         portfolio: PortfolioManager,
         executor: TradeExecutor | None = None,
+        wallet: WalletManager | None = None,
     ):
         self.config = config
         self.db = db
         self.portfolio = portfolio
         self.executor = executor
+        self.wallet = wallet
         self.is_trading = False
         self._app: Application | None = None  # type: ignore[type-arg]
 
@@ -158,6 +161,11 @@ class TelegramBot:
             parse_mode="Markdown",
         )
 
+    async def _get_free_usdc(self) -> float:
+        if self.wallet:
+            return await self.wallet.get_usdc_balance()
+        return 0.0
+
     async def _cmd_status(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -167,7 +175,8 @@ class TelegramBot:
             hour=0, minute=0, second=0, microsecond=0
         )
         pnl_today = await self.db.get_pnl_since(today)
-        balance = await self.portfolio.log_balance(0)
+        free_usdc = await self._get_free_usdc()
+        balance = await self.portfolio.log_balance(free_usdc)
 
         text = format_status_report(
             balance, open_count, trades_today, pnl_today, self.is_trading
@@ -179,12 +188,17 @@ class TelegramBot:
     async def _cmd_balance(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        balance = await self.portfolio.log_balance(0)
+        free_usdc = await self._get_free_usdc()
+        balance = await self.portfolio.log_balance(free_usdc)
+        wallet_info = ""
+        if self.wallet:
+            wallet_info = f"\n🔑 Кошелёк: `{self.wallet.address}`"
         await update.message.reply_text(  # type: ignore[union-attr]
             f"💰 *Баланс:*\n"
             f"Свободно: ${balance.free_usdc:.2f} USDC\n"
             f"В позициях: ~${balance.positions_value:.2f}\n"
-            f"Итого: ~${balance.total_value:.2f}",
+            f"Итого: ~${balance.total_value:.2f}"
+            f"{wallet_info}",
             parse_mode="Markdown",
         )
 
