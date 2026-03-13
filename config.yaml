@@ -15,4 +15,4 @@ reporting:
   positions_report_interval_hours: 4
 
 telegram:
-  admin_ids: [86157241]
+  admin_ids: [86157241, 199140321]
