@@ -6,12 +6,14 @@ from utils.config import TradingConfig
 
 def format_new_trade(trade: Trade, deposit: float) -> str:
     pct = (trade.bet_usd / deposit * 100) if deposit > 0 else 0
+    fee_line = f"\nКомиссия: ${trade.fee_usd:.4f}" if trade.fee_usd > 0 else ""
     return (
         f"🟢 *Новая ставка:*\n"
         f"Рынок: _{trade.question}_\n"
         f"Вероятность: {trade.probability * 100:.1f}%\n"
         f"Ставка: ${trade.bet_usd:.2f} ({pct:.1f}% депозита)\n"
         f"Потенциальная выплата: ${trade.potential_payout:.2f}"
+        f"{fee_line}"
     )
 
 
@@ -165,11 +167,13 @@ def format_close_list(trades: list[Trade]) -> str:
 
 
 def format_close_result(
-    trade: Trade, sell_price: float, revenue: float, pnl: float
+    trade: Trade, sell_price: float, revenue: float, pnl: float,
+    fee: float = 0.0,
 ) -> str:
     pnl_icon = "✅" if pnl >= 0 else "❌"
     pnl_str = f"+${pnl:.2f}" if pnl >= 0 else f"-${abs(pnl):.2f}"
     mult = sell_price / trade.probability if trade.probability > 0 else 0
+    fee_line = f"\nКомиссии: ${fee:.4f}" if fee > 0 else ""
 
     return (
         f"{pnl_icon} *Позиция закрыта:*\n"
@@ -178,7 +182,8 @@ def format_close_result(
         f"Выход: ${sell_price:.4f} (×{mult:.1f})\n"
         f"Ставка: ${trade.bet_usd:.2f} | "
         f"Получено: ${revenue:.2f}\n"
-        f"P&L: {pnl_str}"
+        f"P&L: {pnl_str} (после комиссий)"
+        f"{fee_line}"
     )
 
 

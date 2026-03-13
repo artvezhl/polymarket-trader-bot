@@ -29,6 +29,9 @@ class Trade:
     token_id: str = ""
     current_price: float = 0.0
     price_alert_sent: bool = False
+    order_id: str = ""
+    fill_price: float = 0.0
+    fee_usd: float = 0.0
 
     @property
     def shares(self) -> float:
@@ -65,6 +68,9 @@ class Trade:
             token_id=row[11] or "",
             current_price=row[12] if len(row) > 12 else 0.0,
             price_alert_sent=bool(row[13]) if len(row) > 13 else False,
+            order_id=row[14] if len(row) > 14 else "",
+            fill_price=row[15] if len(row) > 15 else 0.0,
+            fee_usd=row[16] if len(row) > 16 else 0.0,
         )
 
 

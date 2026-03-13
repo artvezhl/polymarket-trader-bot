@@ -51,6 +51,8 @@ BOT_COMMANDS = [
     BotCommand("set_spike_mult", "Множитель алерта цены"),
     BotCommand("close", "Закрыть позицию"),
     BotCommand("scan", "Сканировать рынки (показать кол-во)"),
+    BotCommand("sync", "Синхронизировать с CLOB API"),
+    BotCommand("fees", "Статистика по комиссиям"),
     BotCommand("report", "Полный отчёт"),
     BotCommand("history", "Последние 20 сделок"),
     BotCommand("pnl", "P&L за день / неделю / всё время"),
@@ -116,6 +118,8 @@ class TelegramBot:
             ("set_spike_mult", self._cmd_set_spike_mult),
             ("close", self._cmd_close),
             ("scan", self._cmd_scan),
+            ("sync", self._cmd_sync),
+            ("fees", self._cmd_fees),
             ("report", self._cmd_report),
             ("history", self._cmd_history),
             ("pnl", self._cmd_pnl),
@@ -551,6 +555,7 @@ class TelegramBot:
                 result["sell_price"],
                 result["revenue"],
                 result["pnl"],
+                result.get("fee", 0.0),
             )
             await update.message.reply_text(  # type: ignore[union-attr]
                 text, parse_mode="Markdown"
@@ -640,6 +645,95 @@ class TelegramBot:
         kb = self._scan_keyboard(page, len(opportunities))
         await query.edit_message_text(
             text, parse_mode="Markdown", reply_markup=kb
+        )
+
+    # ── Sync & Fees ───────────────────────────────────────────────
+
+    async def _cmd_sync(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not self.executor:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "❌ Executor не настроен. Проверьте API ключи."
+            )
+            return
+
+        await update.message.reply_text(  # type: ignore[union-attr]
+            "🔄 Синхронизирую с CLOB API..."
+        )
+
+        try:
+            import asyncio as _aio
+
+            trades_resp = await _aio.to_thread(
+                self.executor.client.get_trades
+            )
+            orders_resp = await _aio.to_thread(
+                self.executor.client.get_orders
+            )
+
+            trades_data = trades_resp if isinstance(trades_resp, list) else []
+            orders_data = orders_resp if isinstance(orders_resp, list) else []
+
+            open_db_trades = await self.db.get_open_trades()
+            updated = 0
+            for db_trade in open_db_trades:
+                if not db_trade.order_id:
+                    continue
+                for api_trade in trades_data:
+                    if api_trade.get("order_id") == db_trade.order_id:
+                        fee = float(api_trade.get("fee_rate_bps", 0)) / 10000
+                        price = float(api_trade.get("price", 0))
+                        size = float(api_trade.get("size", 0))
+                        fee_usd = round(price * size * fee, 4)
+                        if price > 0:
+                            await self.db.update_trade_fill(
+                                db_trade.id,  # type: ignore[arg-type]
+                                db_trade.order_id,
+                                price,
+                                fee_usd,
+                            )
+                            updated += 1
+                        break
+
+            await update.message.reply_text(  # type: ignore[union-attr]
+                f"✅ *Синхронизация завершена:*\n"
+                f"Сделок в CLOB: {len(trades_data)}\n"
+                f"Ордеров в CLOB: {len(orders_data)}\n"
+                f"Обновлено в БД: {updated}",
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.error("Sync failed: %s", e)
+            await update.message.reply_text(  # type: ignore[union-attr]
+                f"❌ Ошибка синхронизации: {e}"
+            )
+
+    async def _cmd_fees(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        today = datetime.now().replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        week_ago = today - timedelta(days=7)
+
+        fees_today = await self.db.get_fees_since(today)
+        fees_week = await self.db.get_fees_since(week_ago)
+        fees_total = await self.db.get_total_fees()
+
+        total_pnl = await self.db.get_total_pnl()
+        net_pnl = total_pnl - fees_total
+
+        await update.message.reply_text(  # type: ignore[union-attr]
+            f"💸 *Комиссии:*\n"
+            f"Сегодня: ${fees_today:.4f}\n"
+            f"Неделя: ${fees_week:.4f}\n"
+            f"Всё время: ${fees_total:.4f}\n\n"
+            f"📊 *Итого с учётом комиссий:*\n"
+            f"Gross P&L: ${total_pnl:.2f}\n"
+            f"Комиссии: -${fees_total:.4f}\n"
+            f"Net P&L: ${net_pnl:.2f}",
+            parse_mode="Markdown",
         )
 
     # ── Reports ──────────────────────────────────────────────────

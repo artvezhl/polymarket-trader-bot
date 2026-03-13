@@ -27,7 +27,10 @@ CREATE TABLE IF NOT EXISTS trades (
     pnl REAL DEFAULT 0,
     token_id TEXT DEFAULT '',
     current_price REAL DEFAULT 0,
-    price_alert_sent INTEGER DEFAULT 0
+    price_alert_sent INTEGER DEFAULT 0,
+    order_id TEXT DEFAULT '',
+    fill_price REAL DEFAULT 0,
+    fee_usd REAL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS balance_log (
@@ -42,6 +45,9 @@ CREATE TABLE IF NOT EXISTS balance_log (
 MIGRATIONS = [
     "ALTER TABLE trades ADD COLUMN current_price REAL DEFAULT 0",
     "ALTER TABLE trades ADD COLUMN price_alert_sent INTEGER DEFAULT 0",
+    "ALTER TABLE trades ADD COLUMN order_id TEXT DEFAULT ''",
+    "ALTER TABLE trades ADD COLUMN fill_price REAL DEFAULT 0",
+    "ALTER TABLE trades ADD COLUMN fee_usd REAL DEFAULT 0",
 ]
 
 
@@ -76,8 +82,9 @@ class Database:
             """INSERT INTO trades
                (market_id, question, probability, bet_usd, potential_payout,
                 outcome, status, created_at, resolved_at, pnl, token_id,
-                current_price, price_alert_sent)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                current_price, price_alert_sent,
+                order_id, fill_price, fee_usd)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 trade.market_id,
                 trade.question,
@@ -92,6 +99,9 @@ class Database:
                 trade.token_id,
                 trade.current_price,
                 int(trade.price_alert_sent),
+                trade.order_id,
+                trade.fill_price,
+                trade.fee_usd,
             ),
         )
         await self.conn.commit()
@@ -212,6 +222,31 @@ class Database:
             (key, value),
         )
         await self.conn.commit()
+
+    async def update_trade_fill(
+        self, trade_id: int, order_id: str, fill_price: float, fee_usd: float
+    ) -> None:
+        await self.conn.execute(
+            """UPDATE trades SET order_id = ?, fill_price = ?, fee_usd = ?
+               WHERE id = ?""",
+            (order_id, fill_price, fee_usd, trade_id),
+        )
+        await self.conn.commit()
+
+    async def get_total_fees(self) -> float:
+        cursor = await self.conn.execute(
+            "SELECT COALESCE(SUM(fee_usd), 0) FROM trades"
+        )
+        row = await cursor.fetchone()
+        return float(row[0]) if row else 0.0
+
+    async def get_fees_since(self, since: datetime) -> float:
+        cursor = await self.conn.execute(
+            "SELECT COALESCE(SUM(fee_usd), 0) FROM trades WHERE created_at >= ?",
+            (since.isoformat(),),
+        )
+        row = await cursor.fetchone()
+        return float(row[0]) if row else 0.0
 
     async def get_all_config(self) -> dict[str, str]:
         cursor = await self.conn.execute("SELECT key, value FROM config")

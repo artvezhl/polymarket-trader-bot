@@ -74,6 +74,10 @@ class TradeExecutor:
                 )
                 return None
 
+            order_id = resp.get("orderID", resp.get("id", ""))
+            fee_rate = await self._get_fee_rate(opportunity.token_id)
+            fee_usd = round(bet_usd * fee_rate, 4)
+
             trade = Trade(
                 id=None,
                 market_id=opportunity.market_id,
@@ -85,23 +89,35 @@ class TradeExecutor:
                 status=TradeStatus.OPEN,
                 created_at=datetime.now(),
                 token_id=opportunity.token_id,
+                order_id=order_id,
+                fill_price=opportunity.probability,
+                fee_usd=fee_usd,
             )
 
             trade_id = await self.db.insert_trade(trade)
             trade.id = trade_id
 
             logger.info(
-                "Trade executed: %s | prob=%.2f%% | bet=$%.2f | payout=$%.2f",
+                "Trade executed: %s | prob=%.2f%% | bet=$%.2f | fee=$%.4f",
                 opportunity.question[:50],
                 opportunity.probability * 100,
                 bet_usd,
-                potential_payout,
+                fee_usd,
             )
             return trade
 
         except Exception as e:
             logger.error("Trade execution failed for %s: %s", opportunity.question[:50], e)
             return None
+
+    async def _get_fee_rate(self, token_id: str) -> float:
+        try:
+            bps = await asyncio.to_thread(
+                self.client.get_fee_rate_bps, token_id
+            )
+            return int(bps) / 10000
+        except Exception:
+            return 0.0
 
     async def close_position(self, trade: Trade) -> dict | None:
         """Sell a position via CLOB API. Returns result dict or None."""
@@ -135,23 +151,32 @@ class TradeExecutor:
                 logger.warning("Sell order rejected: %s", resp)
                 return None
 
+            sell_order_id = resp.get("orderID", resp.get("id", ""))
+            fee_rate = await self._get_fee_rate(trade.token_id)
             revenue = shares * best_bid
-            pnl = revenue - trade.bet_usd
+            sell_fee = round(revenue * fee_rate, 4)
+            pnl = revenue - trade.bet_usd - trade.fee_usd - sell_fee
             status = TradeStatus.CLOSED
 
             await self.db.close_trade(trade.id, pnl, status)  # type: ignore[arg-type]
+            total_fee = trade.fee_usd + sell_fee
+            await self.db.update_trade_fill(
+                trade.id, sell_order_id, best_bid, total_fee  # type: ignore[arg-type]
+            )
 
             logger.info(
-                "Position closed: %s | sell=%.4f | pnl=$%.2f",
+                "Position closed: %s | sell=%.4f | pnl=$%.2f | fee=$%.4f",
                 trade.question[:50],
                 best_bid,
                 pnl,
+                total_fee,
             )
             return {
                 "trade": trade,
                 "sell_price": best_bid,
                 "revenue": revenue,
                 "pnl": pnl,
+                "fee": total_fee,
             }
 
         except Exception as e:
