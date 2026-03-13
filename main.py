@@ -17,7 +17,7 @@ from database.db import Database
 from trading.executor import TradeExecutor
 from trading.portfolio import PortfolioManager
 from trading.scanner import MarketScanner
-from utils.config import AppConfig, load_config
+from utils.config import AppConfig, apply_db_overrides, load_config
 from utils.logger import logger
 from utils.wallet import WalletManager
 
@@ -38,12 +38,18 @@ class TradingEngine:
         self.tg_bot = TelegramBot(
             config, self.db, self.portfolio, self.executor, self.wallet
         )
+        self.tg_bot.scanner = self.scanner
         self._shutdown = asyncio.Event()
 
     async def start(self) -> None:
         logger.info("Starting Polymarket Trading Bot...")
 
         await self.db.connect()
+
+        db_values = await self.db.get_all_config()
+        if db_values:
+            apply_db_overrides(self.config, db_values)
+            logger.info("Loaded %d config overrides from DB", len(db_values))
 
         app = self.tg_bot.build_app()
         await app.initialize()

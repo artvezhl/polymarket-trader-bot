@@ -13,12 +13,14 @@ from bot.notifications import (
     format_history,
     format_pnl,
     format_positions_list,
+    format_scan_result,
     format_settings,
     format_status_report,
 )
 from database.db import Database
 from trading.executor import TradeExecutor
 from trading.portfolio import PortfolioManager
+from trading.scanner import MarketScanner
 from utils.config import AppConfig
 from utils.logger import logger
 from utils.wallet import WalletManager
@@ -42,6 +44,7 @@ BOT_COMMANDS = [
     BotCommand("set_interval", "Интервал сканирования (сек)"),
     BotCommand("set_spike_mult", "Множитель алерта цены"),
     BotCommand("close", "Закрыть позицию"),
+    BotCommand("scan", "Сканировать рынки (показать кол-во)"),
     BotCommand("report", "Полный отчёт"),
     BotCommand("history", "Последние 20 сделок"),
     BotCommand("pnl", "P&L за день / неделю / всё время"),
@@ -62,6 +65,7 @@ class TelegramBot:
         self.portfolio = portfolio
         self.executor = executor
         self.wallet = wallet
+        self.scanner: MarketScanner | None = None
         self.is_trading = False
         self._app: Application | None = None  # type: ignore[type-arg]
 
@@ -104,6 +108,7 @@ class TelegramBot:
             ("set_interval", self._cmd_set_interval),
             ("set_spike_mult", self._cmd_set_spike_mult),
             ("close", self._cmd_close),
+            ("scan", self._cmd_scan),
             ("report", self._cmd_report),
             ("history", self._cmd_history),
             ("pnl", self._cmd_pnl),
@@ -241,6 +246,9 @@ class TelegramBot:
 
     # ── Setting commands ─────────────────────────────────────────
 
+    async def _persist(self, db_key: str, value: float | int) -> None:
+        await self.db.set_config(db_key, str(value))
+
     async def _cmd_set_max_prob(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -257,9 +265,10 @@ class TelegramBot:
             if not 0 < value < 1:
                 raise ValueError
             self.config.trading.max_probability = value
+            await self._persist("trading.max_probability", value)
             await update.message.reply_text(  # type: ignore[union-attr]
                 f"✅ Макс. вероятность: {cur * 100:.1f}% → "
-                f"*{value * 100:.1f}%*",
+                f"*{value * 100:.1f}%* 💾",
                 parse_mode="Markdown",
             )
             logger.info("max_probability changed: %.4f -> %.4f", cur, value)
@@ -285,9 +294,10 @@ class TelegramBot:
             if not 0 < value <= 1:
                 raise ValueError
             self.config.trading.bet_size_pct = value
+            await self._persist("trading.bet_size_pct", value)
             await update.message.reply_text(  # type: ignore[union-attr]
                 f"✅ Размер ставки: {cur * 100:.1f}% → "
-                f"*{value * 100:.1f}%*",
+                f"*{value * 100:.1f}%* 💾",
                 parse_mode="Markdown",
             )
             logger.info("bet_size_pct changed: %.4f -> %.4f", cur, value)
@@ -319,8 +329,9 @@ class TelegramBot:
                 )
                 return
             self.config.trading.min_bet_usd = value
+            await self._persist("trading.min_bet_usd", value)
             await update.message.reply_text(  # type: ignore[union-attr]
-                f"✅ Мин. ставка: ${cur:.2f} → *${value:.2f}*",
+                f"✅ Мин. ставка: ${cur:.2f} → *${value:.2f}* 💾",
                 parse_mode="Markdown",
             )
             logger.info("min_bet_usd changed: %.2f -> %.2f", cur, value)
@@ -352,8 +363,9 @@ class TelegramBot:
                 )
                 return
             self.config.trading.max_bet_usd = value
+            await self._persist("trading.max_bet_usd", value)
             await update.message.reply_text(  # type: ignore[union-attr]
-                f"✅ Макс. ставка: ${cur:.2f} → *${value:.2f}*",
+                f"✅ Макс. ставка: ${cur:.2f} → *${value:.2f}* 💾",
                 parse_mode="Markdown",
             )
             logger.info("max_bet_usd changed: %.2f -> %.2f", cur, value)
@@ -379,8 +391,9 @@ class TelegramBot:
             if value < 1:
                 raise ValueError
             self.config.trading.max_open_positions = value
+            await self._persist("trading.max_open_positions", value)
             await update.message.reply_text(  # type: ignore[union-attr]
-                f"✅ Макс. позиций: {cur} → *{value}*",
+                f"✅ Макс. позиций: {cur} → *{value}* 💾",
                 parse_mode="Markdown",
             )
             logger.info("max_open_positions changed: %d -> %d", cur, value)
@@ -406,8 +419,9 @@ class TelegramBot:
             if value < 0:
                 raise ValueError
             self.config.trading.min_liquidity = value
+            await self._persist("trading.min_liquidity", value)
             await update.message.reply_text(  # type: ignore[union-attr]
-                f"✅ Мин. ликвидность: ${cur:,.0f} → *${value:,.0f}*",
+                f"✅ Мин. ликвидность: ${cur:,.0f} → *${value:,.0f}* 💾",
                 parse_mode="Markdown",
             )
             logger.info("min_liquidity changed: %.0f -> %.0f", cur, value)
@@ -433,8 +447,9 @@ class TelegramBot:
             if value < 10:
                 raise ValueError
             self.config.trading.scan_interval_sec = value
+            await self._persist("trading.scan_interval_sec", value)
             await update.message.reply_text(  # type: ignore[union-attr]
-                f"✅ Интервал: {cur}с → *{value}с*",
+                f"✅ Интервал: {cur}с → *{value}с* 💾",
                 parse_mode="Markdown",
             )
             logger.info("scan_interval_sec changed: %d -> %d", cur, value)
@@ -460,8 +475,9 @@ class TelegramBot:
             if value < 1.1:
                 raise ValueError
             self.config.trading.price_spike_multiplier = value
+            await self._persist("trading.price_spike_multiplier", value)
             await update.message.reply_text(  # type: ignore[union-attr]
-                f"✅ Алерт при росте: ×{cur:.0f} → *×{value:.0f}*",
+                f"✅ Алерт при росте: ×{cur:.0f} → *×{value:.0f}* 💾",
                 parse_mode="Markdown",
             )
             logger.info(
@@ -531,6 +547,34 @@ class TelegramBot:
                 "❌ Не удалось закрыть позицию. "
                 "Возможно, нет ликвидности или проблема с API."
             )
+
+    # ── Scan ─────────────────────────────────────────────────────
+
+    async def _cmd_scan(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not self.scanner:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "❌ Сканер не инициализирован"
+            )
+            return
+
+        await update.message.reply_text(  # type: ignore[union-attr]
+            "🔎 Сканирую рынки..."
+        )
+
+        existing_ids = await self.portfolio.get_existing_market_ids()
+        markets = await self.scanner.fetch_markets()
+        opportunities = self.scanner.filter_markets(
+            markets, existing_ids
+        )
+
+        text = format_scan_result(
+            len(markets), opportunities, self.config.trading
+        )
+        await update.message.reply_text(  # type: ignore[union-attr]
+            text, parse_mode="Markdown"
+        )
 
     # ── Reports ──────────────────────────────────────────────────
 

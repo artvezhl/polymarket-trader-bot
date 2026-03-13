@@ -212,3 +212,8 @@ class Database:
             (key, value),
         )
         await self.conn.commit()
+
+    async def get_all_config(self) -> dict[str, str]:
+        cursor = await self.conn.execute("SELECT key, value FROM config")
+        rows = await cursor.fetchall()
+        return {row[0]: row[1] for row in rows}

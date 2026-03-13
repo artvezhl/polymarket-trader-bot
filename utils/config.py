@@ -92,3 +92,40 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> App
         telegram=telegram,
         secrets=secrets,
     )
+
+
+TRADING_CONFIG_KEYS = {
+    "max_probability": float,
+    "bet_size_pct": float,
+    "min_bet_usd": float,
+    "max_bet_usd": float,
+    "min_liquidity": float,
+    "max_open_positions": int,
+    "scan_interval_sec": int,
+    "price_check_interval_sec": int,
+    "price_spike_multiplier": float,
+}
+
+REPORTING_CONFIG_KEYS = {
+    "positions_report_interval_hours": int,
+    "status_interval_min": int,
+}
+
+
+def apply_db_overrides(config: AppConfig, db_values: dict[str, str]) -> None:
+    """Apply config overrides stored in the database."""
+    for key, cast in TRADING_CONFIG_KEYS.items():
+        db_key = f"trading.{key}"
+        if db_key in db_values:
+            try:
+                setattr(config.trading, key, cast(db_values[db_key]))
+            except (ValueError, TypeError):
+                pass
+
+    for key, cast in REPORTING_CONFIG_KEYS.items():
+        db_key = f"reporting.{key}"
+        if db_key in db_values:
+            try:
+                setattr(config.reporting, key, cast(db_values[db_key]))
+            except (ValueError, TypeError):
+                pass

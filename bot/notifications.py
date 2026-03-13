@@ -182,6 +182,29 @@ def format_close_result(
     )
 
 
+def format_scan_result(
+    total_markets: int,
+    opportunities: list,
+    config: "TradingConfig",
+) -> str:
+    lines = [
+        f"🔎 *Результат сканирования:*\n"
+        f"Всего рынков: {total_markets}\n"
+        f"Подходящих: *{len(opportunities)}*\n\n"
+        f"_Фильтры:_ вер. ≤ {config.max_probability * 100:.1f}%, "
+        f"ликв. ≥ ${config.min_liquidity:,.0f}\n"
+    ]
+    if opportunities:
+        lines.append("*Топ-10:*")
+        for opp in opportunities[:10]:
+            lines.append(
+                f"• [{opp.probability * 100:.1f}%] "
+                f"_{opp.question[:45]}_\n"
+                f"  лик: ${opp.liquidity:,.0f}"
+            )
+    return "\n".join(lines)
+
+
 def format_pnl(pnl_today: float, pnl_week: float, pnl_total: float) -> str:
     def _fmt(v: float) -> str:
         if v >= 0:
