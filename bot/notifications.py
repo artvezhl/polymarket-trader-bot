@@ -182,26 +182,46 @@ def format_close_result(
     )
 
 
+SCAN_PAGE_SIZE = 10
+
+
 def format_scan_result(
     total_markets: int,
     opportunities: list,
     config: "TradingConfig",
+    page: int = 0,
 ) -> str:
+    total = len(opportunities)
+    start = page * SCAN_PAGE_SIZE
+    end = start + SCAN_PAGE_SIZE
+    page_items = opportunities[start:end]
+    total_pages = max(1, (total + SCAN_PAGE_SIZE - 1) // SCAN_PAGE_SIZE)
+
     lines = [
         f"🔎 *Результат сканирования:*\n"
         f"Всего рынков: {total_markets}\n"
-        f"Подходящих: *{len(opportunities)}*\n\n"
+        f"Подходящих: *{total}*\n"
         f"_Фильтры:_ вер. ≤ {config.max_probability * 100:.1f}%, "
         f"ликв. ≥ ${config.min_liquidity:,.0f}\n"
     ]
-    if opportunities:
-        lines.append("*Топ-10:*")
-        for opp in opportunities[:10]:
-            lines.append(
-                f"• [{opp.probability * 100:.1f}%] "
-                f"_{opp.question[:45]}_\n"
-                f"  лик: ${opp.liquidity:,.0f}"
+
+    if page_items:
+        lines.append(f"📄 *Стр. {page + 1}/{total_pages}* "
+                      f"({start + 1}-{min(end, total)} из {total}):\n")
+        for i, opp in enumerate(page_items, start + 1):
+            min_ord = (
+                f" | мин: ${opp.min_order_size:.0f}"
+                if opp.min_order_size > 0
+                else ""
             )
+            lines.append(
+                f"{i}. [{opp.probability * 100:.1f}%] "
+                f"_{opp.question[:42]}_\n"
+                f"   лик: ${opp.liquidity:,.0f}{min_ord}"
+            )
+    else:
+        lines.append("Нет результатов на этой странице.")
+
     return "\n".join(lines)
 
 

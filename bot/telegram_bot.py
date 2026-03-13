@@ -4,10 +4,16 @@ from datetime import datetime, timedelta
 from functools import wraps
 from typing import Any, Callable, Coroutine
 
-from telegram import BotCommand, Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+)
 
 from bot.notifications import (
+    SCAN_PAGE_SIZE,
     format_close_list,
     format_close_result,
     format_history,
@@ -67,6 +73,7 @@ class TelegramBot:
         self.wallet = wallet
         self.scanner: MarketScanner | None = None
         self.is_trading = False
+        self._scan_cache: dict[int, tuple[int, list]] = {}
         self._app: Application | None = None  # type: ignore[type-arg]
 
     def _admin_only(self, func: HandlerFunc) -> HandlerFunc:
@@ -117,6 +124,12 @@ class TelegramBot:
             app.add_handler(
                 CommandHandler(name, self._admin_only(handler))
             )
+        app.add_handler(
+            CallbackQueryHandler(
+                self._admin_only(self._cb_scan_page),
+                pattern=r"^scan_page:\d+$",
+            )
+        )
 
     def build_app(self) -> Application:  # type: ignore[type-arg]
         app = (
@@ -550,6 +563,29 @@ class TelegramBot:
 
     # ── Scan ─────────────────────────────────────────────────────
 
+    def _scan_keyboard(
+        self, page: int, total: int
+    ) -> InlineKeyboardMarkup | None:
+        total_pages = max(1, (total + SCAN_PAGE_SIZE - 1) // SCAN_PAGE_SIZE)
+        if total_pages <= 1:
+            return None
+
+        buttons: list[InlineKeyboardButton] = []
+        if page > 0:
+            buttons.append(
+                InlineKeyboardButton("⬅️", callback_data=f"scan_page:{page - 1}")
+            )
+        buttons.append(
+            InlineKeyboardButton(
+                f"{page + 1}/{total_pages}", callback_data="scan_page:noop"
+            )
+        )
+        if page < total_pages - 1:
+            buttons.append(
+                InlineKeyboardButton("➡️", callback_data=f"scan_page:{page + 1}")
+            )
+        return InlineKeyboardMarkup([buttons])
+
     async def _cmd_scan(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -565,15 +601,45 @@ class TelegramBot:
 
         existing_ids = await self.portfolio.get_existing_market_ids()
         markets = await self.scanner.fetch_markets()
-        opportunities = self.scanner.filter_markets(
-            markets, existing_ids
-        )
+        opportunities = self.scanner.filter_markets(markets, existing_ids)
+
+        user_id = update.effective_user.id if update.effective_user else 0
+        self._scan_cache[user_id] = (len(markets), opportunities)
 
         text = format_scan_result(
-            len(markets), opportunities, self.config.trading
+            len(markets), opportunities, self.config.trading, page=0
         )
+        kb = self._scan_keyboard(0, len(opportunities))
         await update.message.reply_text(  # type: ignore[union-attr]
-            text, parse_mode="Markdown"
+            text, parse_mode="Markdown", reply_markup=kb
+        )
+
+    async def _cb_scan_page(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        query = update.callback_query
+        if not query:
+            return
+        await query.answer()
+
+        data = query.data or ""
+        if data == "scan_page:noop":
+            return
+
+        page = int(data.split(":")[1])
+        user_id = query.from_user.id if query.from_user else 0
+        cached = self._scan_cache.get(user_id)
+        if not cached:
+            await query.edit_message_text("⏳ Кэш истёк. Запустите /scan заново.")
+            return
+
+        total_markets, opportunities = cached
+        text = format_scan_result(
+            total_markets, opportunities, self.config.trading, page=page
+        )
+        kb = self._scan_keyboard(page, len(opportunities))
+        await query.edit_message_text(
+            text, parse_mode="Markdown", reply_markup=kb
         )
 
     # ── Reports ──────────────────────────────────────────────────

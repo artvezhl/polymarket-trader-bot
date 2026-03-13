@@ -22,6 +22,7 @@ class MarketOpportunity:
     liquidity: float
     end_date: datetime | None
     category: str
+    min_order_size: float = 0.0
 
 
 def _parse_list_field(value: str | list | None) -> list[str]:
@@ -124,6 +125,8 @@ class MarketScanner:
             if len(outcomes) != len(prices) or len(outcomes) != len(token_ids):
                 continue
 
+            min_order = _parse_float(market.get("orderMinSize"))
+
             for i, (outcome, price_str, token_id) in enumerate(zip(outcomes, prices, token_ids)):
                 price = _parse_float(price_str)
                 if 0 < price <= self.config.max_probability:
@@ -137,6 +140,7 @@ class MarketScanner:
                             liquidity=liquidity,
                             end_date=end_date,
                             category=category,
+                            min_order_size=min_order,
                         )
                     )
 
