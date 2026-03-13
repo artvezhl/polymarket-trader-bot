@@ -147,3 +147,54 @@ class MarketScanner:
     async def scan(self, existing_market_ids: set[str]) -> list[MarketOpportunity]:
         markets = await self.fetch_markets()
         return self.filter_markets(markets, existing_market_ids)
+
+    async def fetch_market_prices(
+        self, trades: list
+    ) -> dict[str, float]:
+        """Fetch current prices for trades from Gamma API.
+
+        Returns {market_id: {outcome: price}} for each trade.
+        """
+        if not trades:
+            return {}
+
+        unique_ids = {t.market_id for t in trades}
+        market_data: dict[str, dict] = {}
+        timeout = aiohttp.ClientTimeout(total=15)
+
+        async with aiohttp.ClientSession() as session:
+
+            async def _fetch_one(cid: str) -> None:
+                try:
+                    async with session.get(
+                        f"{GAMMA_API_URL}/markets",
+                        params={"conditionId": cid},
+                        timeout=timeout,
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if data:
+                                m = data[0] if isinstance(data, list) else data
+                                market_data[cid] = m
+                except Exception as e:
+                    logger.debug("Price fetch failed for %s: %s", cid[:16], e)
+
+            import asyncio
+
+            await asyncio.gather(
+                *[_fetch_one(cid) for cid in unique_ids]
+            )
+
+        result: dict[str, float] = {}
+        for trade in trades:
+            m = market_data.get(trade.market_id)
+            if not m:
+                continue
+            outcomes = _parse_list_field(m.get("outcomes"))
+            prices = _parse_list_field(m.get("outcomePrices"))
+            for outcome, price_str in zip(outcomes, prices):
+                if outcome.lower() == trade.outcome.lower():
+                    result[str(trade.id)] = _parse_float(price_str)
+                    break
+
+        return result

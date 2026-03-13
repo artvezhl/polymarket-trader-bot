@@ -18,11 +18,14 @@ class TradingConfig:
     max_open_positions: int = 50
     scan_interval_sec: int = 60
     skip_categories: list[str] = field(default_factory=list)
+    price_check_interval_sec: int = 120
+    price_spike_multiplier: float = 10.0
 
 
 @dataclass
 class ReportingConfig:
     status_interval_min: int = 60
+    positions_report_interval_hours: int = 4
 
 
 @dataclass

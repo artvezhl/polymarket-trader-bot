@@ -7,9 +7,12 @@ trading:
   max_open_positions: 50
   scan_interval_sec: 60
   skip_categories: []
+  price_check_interval_sec: 120
+  price_spike_multiplier: 10.0
 
 reporting:
   status_interval_min: 60
+  positions_report_interval_hours: 4
 
 telegram:
   admin_ids: []

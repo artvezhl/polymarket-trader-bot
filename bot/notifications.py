@@ -91,12 +91,94 @@ def format_settings(cfg: TradingConfig) -> str:
         f"📏 Макс. ставка: *${cfg.max_bet_usd:.2f}*\n"
         f"💧 Мин. ликвидность: *${cfg.min_liquidity:,.0f}*\n"
         f"📊 Макс. позиций: *{cfg.max_open_positions}*\n"
-        f"⏱ Интервал: *{cfg.scan_interval_sec}с*\n"
+        f"⏱ Интервал скана: *{cfg.scan_interval_sec}с*\n"
+        f"🔍 Проверка цен: *{cfg.price_check_interval_sec}с*\n"
+        f"🚀 Алерт при росте: *×{cfg.price_spike_multiplier:.0f}*\n"
         f"🚫 Исключения: *{', '.join(cfg.skip_categories) or 'нет'}*\n\n"
         f"_Изменить:_ /set\\_max\\_prob, /set\\_bet\\_size,\n"
         f"/set\\_min\\_bet, /set\\_max\\_bet,\n"
         f"/set\\_max\\_positions, /set\\_liquidity,\n"
-        f"/set\\_interval"
+        f"/set\\_interval, /set\\_spike\\_mult"
+    )
+
+
+def format_price_spike(trade: Trade, new_price: float, multiplier: float) -> str:
+    return (
+        f"🚀 *Рост цены позиции (×{multiplier:.1f}):*\n"
+        f"Рынок: _{trade.question}_\n"
+        f"Вход: ${trade.probability:.4f} → Сейчас: ${new_price:.4f}\n"
+        f"Ставка: ${trade.bet_usd:.2f} → "
+        f"Стоимость: ~${trade.shares * new_price:.2f}\n"
+        f"Unrealized P&L: +${trade.shares * new_price - trade.bet_usd:.2f}\n\n"
+        f"Закрыть: /close (см. список)"
+    )
+
+
+def format_positions_report(trades: list[Trade]) -> str:
+    if not trades:
+        return "📭 Нет открытых позиций"
+
+    total_cost = sum(t.bet_usd for t in trades)
+    total_value = sum(t.current_value for t in trades)
+    total_pnl = total_value - total_cost
+
+    def _pnl_str(v: float) -> str:
+        return f"+${v:.2f}" if v >= 0 else f"-${abs(v):.2f}"
+
+    lines = [
+        f"📋 *Позиции по цене* ({len(trades)} шт.):\n"
+        f"Стоимость: ${total_value:.2f} | "
+        f"PnL: {_pnl_str(total_pnl)}\n"
+    ]
+    for i, t in enumerate(trades, 1):
+        if t.price_multiplier >= 2:
+            icon = "🔥"
+        elif t.price_multiplier >= 1.1:
+            icon = "⬆️"
+        elif t.price_multiplier >= 0.9:
+            icon = "➡️"
+        else:
+            icon = "⬇️"
+
+        lines.append(
+            f"{i}. {icon} _{t.question[:50]}_\n"
+            f"   ${t.probability:.3f}→${t.current_price:.3f} "
+            f"(×{t.price_multiplier:.1f}) | "
+            f"{_pnl_str(t.unrealized_pnl)}"
+        )
+    return "\n".join(lines)
+
+
+def format_close_list(trades: list[Trade]) -> str:
+    if not trades:
+        return "📭 Нет открытых позиций для закрытия"
+
+    lines = ["📋 *Выберите позицию для закрытия:*\n"]
+    for i, t in enumerate(trades, 1):
+        val = f"${t.current_value:.2f}" if t.current_price > 0 else "?"
+        lines.append(
+            f"{i}. _{t.question[:50]}_\n"
+            f"   Ставка: ${t.bet_usd:.2f} | Стоимость: {val}\n"
+            f"   Закрыть: /close {i}"
+        )
+    return "\n".join(lines)
+
+
+def format_close_result(
+    trade: Trade, sell_price: float, revenue: float, pnl: float
+) -> str:
+    pnl_icon = "✅" if pnl >= 0 else "❌"
+    pnl_str = f"+${pnl:.2f}" if pnl >= 0 else f"-${abs(pnl):.2f}"
+    mult = sell_price / trade.probability if trade.probability > 0 else 0
+
+    return (
+        f"{pnl_icon} *Позиция закрыта:*\n"
+        f"Рынок: _{trade.question}_\n"
+        f"Вход: ${trade.probability:.4f} → "
+        f"Выход: ${sell_price:.4f} (×{mult:.1f})\n"
+        f"Ставка: ${trade.bet_usd:.2f} | "
+        f"Получено: ${revenue:.2f}\n"
+        f"P&L: {pnl_str}"
     )
 
 

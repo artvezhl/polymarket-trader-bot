@@ -8,6 +8,8 @@ from telegram import BotCommand, Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from bot.notifications import (
+    format_close_list,
+    format_close_result,
     format_history,
     format_pnl,
     format_positions_list,
@@ -15,6 +17,7 @@ from bot.notifications import (
     format_status_report,
 )
 from database.db import Database
+from trading.executor import TradeExecutor
 from trading.portfolio import PortfolioManager
 from utils.config import AppConfig
 from utils.logger import logger
@@ -36,6 +39,8 @@ BOT_COMMANDS = [
     BotCommand("set_max_positions", "Лимит открытых позиций"),
     BotCommand("set_liquidity", "Мин. ликвидность рынка в $"),
     BotCommand("set_interval", "Интервал сканирования (сек)"),
+    BotCommand("set_spike_mult", "Множитель алерта цены"),
+    BotCommand("close", "Закрыть позицию"),
     BotCommand("report", "Полный отчёт"),
     BotCommand("history", "Последние 20 сделок"),
     BotCommand("pnl", "P&L за день / неделю / всё время"),
@@ -48,10 +53,12 @@ class TelegramBot:
         config: AppConfig,
         db: Database,
         portfolio: PortfolioManager,
+        executor: TradeExecutor | None = None,
     ):
         self.config = config
         self.db = db
         self.portfolio = portfolio
+        self.executor = executor
         self.is_trading = False
         self._app: Application | None = None  # type: ignore[type-arg]
 
@@ -92,6 +99,8 @@ class TelegramBot:
             ("set_max_positions", self._cmd_set_max_positions),
             ("set_liquidity", self._cmd_set_liquidity),
             ("set_interval", self._cmd_set_interval),
+            ("set_spike_mult", self._cmd_set_spike_mult),
+            ("close", self._cmd_close),
             ("report", self._cmd_report),
             ("history", self._cmd_history),
             ("pnl", self._cmd_pnl),
@@ -419,6 +428,94 @@ class TelegramBot:
             await update.message.reply_text(  # type: ignore[union-attr]
                 "❌ Укажите целое число >= 10, например: /set\\_interval 120",
                 parse_mode="Markdown",
+            )
+
+    async def _cmd_set_spike_mult(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        cur = self.config.trading.price_spike_multiplier
+        if not context.args:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                f"Алерт при росте цены: *×{cur:.0f}*\n"
+                f"Изменить: /set\\_spike\\_mult 5",
+                parse_mode="Markdown",
+            )
+            return
+        try:
+            value = float(context.args[0])
+            if value < 1.1:
+                raise ValueError
+            self.config.trading.price_spike_multiplier = value
+            await update.message.reply_text(  # type: ignore[union-attr]
+                f"✅ Алерт при росте: ×{cur:.0f} → *×{value:.0f}*",
+                parse_mode="Markdown",
+            )
+            logger.info(
+                "price_spike_multiplier changed: %.1f -> %.1f", cur, value
+            )
+        except ValueError:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "❌ Укажите число > 1, например: /set\\_spike\\_mult 5",
+                parse_mode="Markdown",
+            )
+
+    # ── Close position ───────────────────────────────────────────
+
+    async def _cmd_close(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        trades = await self.db.get_open_trades()
+
+        if not context.args:
+            text = format_close_list(trades)
+            await update.message.reply_text(  # type: ignore[union-attr]
+                text, parse_mode="Markdown"
+            )
+            return
+
+        try:
+            idx = int(context.args[0])
+        except ValueError:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "❌ Укажите номер позиции: /close 3"
+            )
+            return
+
+        if idx < 1 or idx > len(trades):
+            await update.message.reply_text(  # type: ignore[union-attr]
+                f"❌ Позиция #{idx} не найдена. "
+                f"Доступно: 1-{len(trades)}"
+            )
+            return
+
+        if not self.executor:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "❌ Executor не настроен. Проверьте API ключи."
+            )
+            return
+
+        trade = trades[idx - 1]
+        await update.message.reply_text(  # type: ignore[union-attr]
+            f"⏳ Закрываю позицию #{idx}: "
+            f"_{trade.question[:50]}_...",
+            parse_mode="Markdown",
+        )
+
+        result = await self.executor.close_position(trade)
+        if result:
+            text = format_close_result(
+                result["trade"],
+                result["sell_price"],
+                result["revenue"],
+                result["pnl"],
+            )
+            await update.message.reply_text(  # type: ignore[union-attr]
+                text, parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "❌ Не удалось закрыть позицию. "
+                "Возможно, нет ликвидности или проблема с API."
             )
 
     # ── Reports ──────────────────────────────────────────────────

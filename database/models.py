@@ -10,6 +10,7 @@ class TradeStatus(str, Enum):
     WON = "won"
     LOST = "lost"
     RESOLVED = "resolved"
+    CLOSED = "closed"
 
 
 @dataclass
@@ -26,6 +27,26 @@ class Trade:
     resolved_at: datetime | None = None
     pnl: float = 0.0
     token_id: str = ""
+    current_price: float = 0.0
+    price_alert_sent: bool = False
+
+    @property
+    def shares(self) -> float:
+        return self.potential_payout
+
+    @property
+    def current_value(self) -> float:
+        return self.shares * self.current_price
+
+    @property
+    def unrealized_pnl(self) -> float:
+        return self.current_value - self.bet_usd
+
+    @property
+    def price_multiplier(self) -> float:
+        if self.probability > 0:
+            return self.current_price / self.probability
+        return 0.0
 
     @classmethod
     def from_row(cls, row: tuple) -> Trade:
@@ -42,6 +63,8 @@ class Trade:
             resolved_at=datetime.fromisoformat(row[9]) if row[9] else None,
             pnl=row[10] or 0.0,
             token_id=row[11] or "",
+            current_price=row[12] if len(row) > 12 else 0.0,
+            price_alert_sent=bool(row[13]) if len(row) > 13 else False,
         )
 
 

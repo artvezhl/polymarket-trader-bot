@@ -5,8 +5,9 @@ from datetime import datetime, timezone
 import aiohttp
 
 from database.db import Database
-from database.models import BalanceLog, TradeStatus
-from trading.scanner import GAMMA_API_URL, _parse_float
+from database.models import BalanceLog, Trade, TradeStatus
+from trading.scanner import GAMMA_API_URL, MarketScanner, _parse_float
+from utils.config import TradingConfig
 from utils.logger import logger
 
 
@@ -95,6 +96,48 @@ class PortfolioManager:
                     logger.error("Error checking market %s: %s", trade.market_id, e)
 
         return resolved
+
+    async def update_prices(
+        self, scanner: MarketScanner, config: TradingConfig
+    ) -> list[dict]:
+        """Update current prices for all open trades.
+
+        Returns list of spike alerts for trades that crossed the threshold.
+        """
+        trades = await self.db.get_open_trades()
+        if not trades:
+            return []
+
+        prices = await scanner.fetch_market_prices(trades)
+        alerts: list[dict] = []
+
+        for trade in trades:
+            new_price = prices.get(str(trade.id))
+            if new_price is None:
+                continue
+
+            old_price = trade.current_price
+            await self.db.update_trade_price(trade.id, new_price)  # type: ignore[arg-type]
+
+            if trade.probability <= 0:
+                continue
+            multiplier = new_price / trade.probability
+            if (
+                multiplier >= config.price_spike_multiplier
+                and not trade.price_alert_sent
+            ):
+                await self.db.mark_price_alert_sent(trade.id)  # type: ignore[arg-type]
+                alerts.append({
+                    "trade": trade,
+                    "old_price": old_price,
+                    "new_price": new_price,
+                    "multiplier": multiplier,
+                })
+
+        return alerts
+
+    async def get_positions_report(self) -> list[Trade]:
+        return await self.db.get_open_trades_by_price()
 
     async def log_balance(self, free_usdc: float) -> BalanceLog:
         positions_value = await self.get_open_positions_value()

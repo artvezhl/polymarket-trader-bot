@@ -5,7 +5,7 @@ from datetime import datetime
 
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType
-from py_clob_client.order_builder.constants import BUY
+from py_clob_client.order_builder.constants import BUY, SELL
 
 from database.db import Database
 from database.models import Trade, TradeStatus
@@ -101,4 +101,59 @@ class TradeExecutor:
 
         except Exception as e:
             logger.error("Trade execution failed for %s: %s", opportunity.question[:50], e)
+            return None
+
+    async def close_position(self, trade: Trade) -> dict | None:
+        """Sell a position via CLOB API. Returns result dict or None."""
+        try:
+            book = await asyncio.to_thread(
+                self.client.get_order_book, trade.token_id
+            )
+
+            bids = book.get("bids", [])
+            if not bids:
+                logger.warning("No bids for %s, cannot close", trade.question[:50])
+                return None
+
+            best_bid = float(bids[0]["price"])
+            shares = round(trade.shares, 2)
+
+            order_args = OrderArgs(
+                price=best_bid,
+                size=shares,
+                side=SELL,
+                token_id=trade.token_id,
+            )
+            signed_order = await asyncio.to_thread(
+                self.client.create_order, order_args
+            )
+            resp = await asyncio.to_thread(
+                self.client.post_order, signed_order, OrderType.FOK
+            )
+
+            if not resp or resp.get("status") == "error":
+                logger.warning("Sell order rejected: %s", resp)
+                return None
+
+            revenue = shares * best_bid
+            pnl = revenue - trade.bet_usd
+            status = TradeStatus.CLOSED
+
+            await self.db.close_trade(trade.id, pnl, status)  # type: ignore[arg-type]
+
+            logger.info(
+                "Position closed: %s | sell=%.4f | pnl=$%.2f",
+                trade.question[:50],
+                best_bid,
+                pnl,
+            )
+            return {
+                "trade": trade,
+                "sell_price": best_bid,
+                "revenue": revenue,
+                "pnl": pnl,
+            }
+
+        except Exception as e:
+            logger.error("Close position failed for %s: %s", trade.question[:50], e)
             return None

@@ -122,6 +122,52 @@ class TestDatabase:
         )
         await db.insert_balance_log(log)
 
+    async def test_update_trade_price(self, db: Database):
+        trade = Trade(
+            id=None, market_id="m_price", question="Price test",
+            probability=0.03, bet_usd=2.0, potential_payout=66.67,
+            outcome="Yes", status=TradeStatus.OPEN,
+            created_at=datetime.now(), token_id="tok_p",
+        )
+        trade_id = await db.insert_trade(trade)
+        await db.update_trade_price(trade_id, 0.15)
+
+        trades = await db.get_open_trades()
+        assert trades[0].current_price == 0.15
+
+    async def test_mark_price_alert_and_close(self, db: Database):
+        trade = Trade(
+            id=None, market_id="m_alert", question="Alert test",
+            probability=0.02, bet_usd=1.0, potential_payout=50.0,
+            outcome="Yes", status=TradeStatus.OPEN,
+            created_at=datetime.now(), token_id="tok_a",
+        )
+        trade_id = await db.insert_trade(trade)
+        await db.mark_price_alert_sent(trade_id)
+
+        trades = await db.get_open_trades()
+        assert trades[0].price_alert_sent is True
+
+        await db.close_trade(trade_id, pnl=5.0, status=TradeStatus.CLOSED)
+        open_trades = await db.get_open_trades()
+        assert len(open_trades) == 0
+
+    async def test_get_open_trades_by_price(self, db: Database):
+        for price, mid in [(0.05, "m1"), (0.20, "m2"), (0.01, "m3")]:
+            t = Trade(
+                id=None, market_id=mid, question=f"Q {mid}",
+                probability=0.03, bet_usd=1.0, potential_payout=33.33,
+                outcome="Yes", status=TradeStatus.OPEN,
+                created_at=datetime.now(), token_id=f"tok_{mid}",
+                current_price=price,
+            )
+            await db.insert_trade(t)
+
+        trades = await db.get_open_trades_by_price()
+        assert len(trades) == 3
+        assert trades[0].current_price == 0.20
+        assert trades[-1].current_price == 0.01
+
     async def test_config_store(self, db: Database):
         await db.set_config("test_key", "test_value")
         value = await db.get_config("test_key")

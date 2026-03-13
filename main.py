@@ -3,8 +3,15 @@ from __future__ import annotations
 import asyncio
 import signal
 import sys
+from datetime import datetime
 
-from bot.notifications import format_new_trade, format_position_resolved, format_status_report
+from bot.notifications import (
+    format_new_trade,
+    format_position_resolved,
+    format_positions_report,
+    format_price_spike,
+    format_status_report,
+)
 from bot.telegram_bot import TelegramBot
 from database.db import Database
 from trading.executor import TradeExecutor
@@ -21,7 +28,7 @@ class TradingEngine:
         self.scanner = MarketScanner(config.trading)
         self.portfolio = PortfolioManager(self.db)
         self.executor = TradeExecutor(config, self.db)
-        self.tg_bot = TelegramBot(config, self.db, self.portfolio)
+        self.tg_bot = TelegramBot(config, self.db, self.portfolio, self.executor)
         self._shutdown = asyncio.Event()
 
     async def start(self) -> None:
@@ -42,6 +49,8 @@ class TradingEngine:
             asyncio.create_task(self._scanner_loop(), name="scanner"),
             asyncio.create_task(self._position_monitor_loop(), name="position_monitor"),
             asyncio.create_task(self._status_reporter_loop(), name="status_reporter"),
+            asyncio.create_task(self._price_monitor_loop(), name="price_monitor"),
+            asyncio.create_task(self._positions_report_loop(), name="positions_report"),
         ]
 
         await self.tg_bot.send_message(
@@ -128,9 +137,9 @@ class TradingEngine:
                 balance = await self.portfolio.log_balance(0)
                 open_count = await self.portfolio.get_open_positions_count()
                 trades_today = await self.db.get_trades_count_today()
-                from datetime import datetime
-
-                today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                today = datetime.now().replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
                 pnl_today = await self.db.get_pnl_since(today)
 
                 msg = format_status_report(
@@ -139,6 +148,56 @@ class TradingEngine:
                 await self.tg_bot.send_message(msg)
             except Exception as e:
                 logger.error("Status reporter error: %s", e)
+
+
+    async def _price_monitor_loop(self) -> None:
+        interval = self.config.trading.price_check_interval_sec
+        while not self._shutdown.is_set():
+            try:
+                await asyncio.wait_for(
+                    self._shutdown.wait(), timeout=interval
+                )
+                return
+            except asyncio.TimeoutError:
+                pass
+
+            try:
+                alerts = await self.portfolio.update_prices(
+                    self.scanner, self.config.trading
+                )
+                for alert in alerts:
+                    msg = format_price_spike(
+                        alert["trade"],
+                        alert["new_price"],
+                        alert["multiplier"],
+                    )
+                    await self.tg_bot.send_message(msg)
+                    logger.info(
+                        "Price spike alert: %s (x%.1f)",
+                        alert["trade"].question[:40],
+                        alert["multiplier"],
+                    )
+            except Exception as e:
+                logger.error("Price monitor error: %s", e)
+
+    async def _positions_report_loop(self) -> None:
+        interval = self.config.reporting.positions_report_interval_hours * 3600
+        while not self._shutdown.is_set():
+            try:
+                await asyncio.wait_for(
+                    self._shutdown.wait(), timeout=interval
+                )
+                return
+            except asyncio.TimeoutError:
+                pass
+
+            try:
+                trades = await self.portfolio.get_positions_report()
+                if trades:
+                    msg = format_positions_report(trades)
+                    await self.tg_bot.send_message(msg)
+            except Exception as e:
+                logger.error("Positions report error: %s", e)
 
 
 def main() -> None:

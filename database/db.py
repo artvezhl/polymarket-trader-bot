@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS trades (
     created_at TIMESTAMP,
     resolved_at TIMESTAMP,
     pnl REAL DEFAULT 0,
-    token_id TEXT DEFAULT ''
+    token_id TEXT DEFAULT '',
+    current_price REAL DEFAULT 0,
+    price_alert_sent INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS balance_log (
@@ -37,6 +39,11 @@ CREATE TABLE IF NOT EXISTS balance_log (
 );
 """
 
+MIGRATIONS = [
+    "ALTER TABLE trades ADD COLUMN current_price REAL DEFAULT 0",
+    "ALTER TABLE trades ADD COLUMN price_alert_sent INTEGER DEFAULT 0",
+]
+
 
 class Database:
     def __init__(self, db_path: str = "bot.db"):
@@ -46,6 +53,11 @@ class Database:
     async def connect(self) -> None:
         self._conn = await aiosqlite.connect(self._db_path)
         await self._conn.executescript(SCHEMA)
+        for sql in MIGRATIONS:
+            try:
+                await self._conn.execute(sql)
+            except Exception:
+                pass
         await self._conn.commit()
         logger.info("Database connected: %s", self._db_path)
 
@@ -63,8 +75,9 @@ class Database:
         cursor = await self.conn.execute(
             """INSERT INTO trades
                (market_id, question, probability, bet_usd, potential_payout,
-                outcome, status, created_at, resolved_at, pnl, token_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                outcome, status, created_at, resolved_at, pnl, token_id,
+                current_price, price_alert_sent)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 trade.market_id,
                 trade.question,
@@ -77,6 +90,8 @@ class Database:
                 trade.resolved_at.isoformat() if trade.resolved_at else None,
                 trade.pnl,
                 trade.token_id,
+                trade.current_price,
+                int(trade.price_alert_sent),
             ),
         )
         await self.conn.commit()
@@ -148,6 +163,41 @@ class Database:
             (log.free_usdc, log.positions_value, log.total_value, log.timestamp.isoformat()),
         )
         await self.conn.commit()
+
+    async def update_trade_price(
+        self, trade_id: int, current_price: float
+    ) -> None:
+        await self.conn.execute(
+            "UPDATE trades SET current_price = ? WHERE id = ?",
+            (current_price, trade_id),
+        )
+        await self.conn.commit()
+
+    async def mark_price_alert_sent(self, trade_id: int) -> None:
+        await self.conn.execute(
+            "UPDATE trades SET price_alert_sent = 1 WHERE id = ?",
+            (trade_id,),
+        )
+        await self.conn.commit()
+
+    async def close_trade(
+        self, trade_id: int, pnl: float, status: TradeStatus
+    ) -> None:
+        await self.conn.execute(
+            """UPDATE trades SET status = ?, pnl = ?, resolved_at = ?
+               WHERE id = ?""",
+            (status.value, pnl, datetime.now().isoformat(), trade_id),
+        )
+        await self.conn.commit()
+
+    async def get_open_trades_by_price(self) -> list[Trade]:
+        cursor = await self.conn.execute(
+            """SELECT * FROM trades WHERE status = ?
+               ORDER BY current_price DESC""",
+            (TradeStatus.OPEN.value,),
+        )
+        rows = await cursor.fetchall()
+        return [Trade.from_row(row) for row in rows]
 
     async def get_config(self, key: str) -> str | None:
         cursor = await self.conn.execute(
