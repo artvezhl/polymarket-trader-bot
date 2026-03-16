@@ -42,18 +42,24 @@ jobs:
           POLYMARKET_API_PASSPHRASE: ${{ secrets.POLYMARKET_API_PASSPHRASE }}
           POLYGON_RPC_URL: ${{ secrets.POLYGON_RPC_URL }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          REPO_TOKEN: ${{ secrets.REPO_TOKEN }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SERVER_PORT }}
-          envs: TELEGRAM_BOT_TOKEN,PRIVATE_KEY,POLYMARKET_API_KEY,POLYMARKET_API_SECRET,POLYMARKET_API_PASSPHRASE,POLYGON_RPC_URL,DEPLOY_PATH
+          envs: TELEGRAM_BOT_TOKEN,PRIVATE_KEY,POLYMARKET_API_KEY,POLYMARKET_API_SECRET,POLYMARKET_API_PASSPHRASE,POLYGON_RPC_URL,DEPLOY_PATH,REPO_TOKEN
           script: |
             set -e
 
             DEPLOY_DIR="${DEPLOY_PATH:-$HOME/polymarket-bot}"
-            cd "$DEPLOY_DIR"
 
+            if [ ! -d "$DEPLOY_DIR" ]; then
+              git clone "https://x-access-token:${REPO_TOKEN}@github.com/artvezhl/polymarket-trader-bot.git" "$DEPLOY_DIR"
+            fi
+
+            cd "$DEPLOY_DIR"
+            git remote set-url origin "https://x-access-token:${REPO_TOKEN}@github.com/artvezhl/polymarket-trader-bot.git"
             git pull origin main
 
             cat > .env <<EOF
