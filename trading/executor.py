@@ -10,6 +10,7 @@ from py_clob_client.clob_types import (
     BalanceAllowanceParams,
     OrderArgs,
     OrderType,
+    PartialCreateOrderOptions,
 )
 from py_clob_client.order_builder.constants import BUY, SELL
 
@@ -84,8 +85,14 @@ class TradeExecutor:
                 side=BUY,
                 token_id=opportunity.token_id,
             )
+            options = PartialCreateOrderOptions(
+                tick_size=opportunity.tick_size,
+                neg_risk=opportunity.neg_risk,
+            )
 
-            signed_order = await asyncio.to_thread(self.client.create_order, order_args)
+            signed_order = await asyncio.to_thread(
+                self.client.create_order, order_args, options
+            )
             resp = await asyncio.to_thread(
                 self.client.post_order, signed_order, OrderType.FOK
             )
@@ -164,8 +171,18 @@ class TradeExecutor:
                 side=SELL,
                 token_id=trade.token_id,
             )
+            tick_size = await asyncio.to_thread(
+                self.client.get_tick_size, trade.token_id
+            )
+            neg_risk = await asyncio.to_thread(
+                self.client.get_neg_risk, trade.token_id
+            )
+            options = PartialCreateOrderOptions(
+                tick_size=str(tick_size),
+                neg_risk=neg_risk,
+            )
             signed_order = await asyncio.to_thread(
-                self.client.create_order, order_args
+                self.client.create_order, order_args, options
             )
             resp = await asyncio.to_thread(
                 self.client.post_order, signed_order, OrderType.FOK
