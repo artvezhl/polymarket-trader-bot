@@ -30,36 +30,64 @@ class TradeExecutor:
     @property
     def client(self) -> ClobClient:
         if self._client is None:
-            from eth_account import Account
-
             creds = ApiCreds(
                 api_key=self.config.secrets.polymarket_api_key,
                 api_secret=self.config.secrets.polymarket_api_secret,
                 api_passphrase=self.config.secrets.polymarket_api_passphrase,
             )
-            funder = Account.from_key(
-                self.config.secrets.private_key
-            ).address
-            self._client = ClobClient(
-                host="https://clob.polymarket.com",
-                key=self.config.secrets.private_key,
-                chain_id=137,
-                creds=creds,
-                signature_type=self.config.secrets.signature_type,
-                funder=funder,
-            )
+            sig_type = self.config.secrets.signature_type
+            kwargs: dict = {
+                "host": "https://clob.polymarket.com",
+                "key": self.config.secrets.private_key,
+                "chain_id": 137,
+                "creds": creds,
+                "signature_type": sig_type,
+            }
+            if sig_type in (1, 2):
+                from eth_account import Account
+
+                kwargs["funder"] = Account.from_key(
+                    self.config.secrets.private_key
+                ).address
+            self._client = ClobClient(**kwargs)
         return self._client
 
     async def get_polymarket_balance(self) -> float:
-        try:
-            params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
-            resp = await asyncio.to_thread(
-                self.client.get_balance_allowance, params
-            )
-            return float(resp.get("balance", 0)) / 1e6
-        except Exception as e:
-            logger.error("Failed to get Polymarket balance: %s", e)
-            return 0.0
+        """Fetch USDC balance, trying sig_type 2 then 0."""
+        for sig in [2, 0]:
+            try:
+                creds = ApiCreds(
+                    api_key=self.config.secrets.polymarket_api_key,
+                    api_secret=self.config.secrets.polymarket_api_secret,
+                    api_passphrase=self.config.secrets.polymarket_api_passphrase,
+                )
+                c = ClobClient(
+                    host="https://clob.polymarket.com",
+                    key=self.config.secrets.private_key,
+                    chain_id=137,
+                    creds=creds,
+                    signature_type=sig,
+                )
+                params = BalanceAllowanceParams(
+                    asset_type=AssetType.COLLATERAL
+                )
+                resp = await asyncio.to_thread(
+                    c.get_balance_allowance, params
+                )
+                balance = float(resp.get("balance", 0)) / 1e6
+                if balance > 0:
+                    return balance
+            except Exception:
+                continue
+        logger.warning("Polymarket balance returned 0 for all sig types")
+        return 0.0
+
+    @staticmethod
+    def _round_to_tick(price: float, tick_size: str) -> float:
+        tick = float(tick_size)
+        if tick <= 0:
+            return price
+        return round(round(price / tick) * tick, 4)
 
     def calculate_bet_size(self, deposit: float) -> float:
         bet = deposit * self.config.trading.bet_size_pct
@@ -75,12 +103,18 @@ class TradeExecutor:
             logger.info("Bet size $%.2f below minimum, skipping", bet_usd)
             return None
 
-        shares = bet_usd / opportunity.probability
+        price = self._round_to_tick(
+            opportunity.probability, opportunity.tick_size
+        )
+        if price <= 0:
+            return None
+
+        shares = bet_usd / price
         potential_payout = shares
 
         try:
             order_args = OrderArgs(
-                price=opportunity.probability,
+                price=price,
                 size=round(shares, 2),
                 side=BUY,
                 token_id=opportunity.token_id,
