@@ -13,8 +13,6 @@ from eth_account import Account
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import (
     ApiCreds,
-    AssetType,
-    BalanceAllowanceParams,
     OrderArgs,
     OrderType,
     PartialCreateOrderOptions,
@@ -77,7 +75,11 @@ def main():
 
     print(f"Market: {test_market['question']}")
     print(f"Token: {test_market['token_id'][:30]}...")
-    print(f"Price: {test_market['price']}, tick: {test_market['tick_size']}, neg_risk: {test_market['neg_risk']}")
+    print(
+        f"Price: {test_market['price']}, "
+        f"tick: {test_market['tick_size']}, "
+        f"neg_risk: {test_market['neg_risk']}"
+    )
 
     # Step 2: test all combinations
     print("\n=== Step 2: Testing signature combinations ===")
