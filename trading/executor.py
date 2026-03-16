@@ -4,7 +4,13 @@ import asyncio
 from datetime import datetime
 
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType
+from py_clob_client.clob_types import (
+    ApiCreds,
+    AssetType,
+    BalanceAllowanceParams,
+    OrderArgs,
+    OrderType,
+)
 from py_clob_client.order_builder.constants import BUY, SELL
 
 from database.db import Database
@@ -35,6 +41,17 @@ class TradeExecutor:
                 creds=creds,
             )
         return self._client
+
+    async def get_polymarket_balance(self) -> float:
+        try:
+            params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            resp = await asyncio.to_thread(
+                self.client.get_balance_allowance, params
+            )
+            return float(resp.get("balance", 0)) / 1e6
+        except Exception as e:
+            logger.error("Failed to get Polymarket balance: %s", e)
+            return 0.0
 
     def calculate_bet_size(self, deposit: float) -> float:
         bet = deposit * self.config.trading.bet_size_pct

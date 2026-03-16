@@ -29,7 +29,6 @@ from trading.portfolio import PortfolioManager
 from trading.scanner import MarketScanner
 from utils.config import AppConfig
 from utils.logger import logger
-from utils.wallet import WalletManager
 
 HandlerFunc = Callable[..., Coroutine[Any, Any, None]]
 
@@ -66,13 +65,11 @@ class TelegramBot:
         db: Database,
         portfolio: PortfolioManager,
         executor: TradeExecutor | None = None,
-        wallet: WalletManager | None = None,
     ):
         self.config = config
         self.db = db
         self.portfolio = portfolio
         self.executor = executor
-        self.wallet = wallet
         self.scanner: MarketScanner | None = None
         self.is_trading = False
         self._scan_cache: dict[int, tuple[int, list]] = {}
@@ -184,8 +181,8 @@ class TelegramBot:
         )
 
     async def _get_free_usdc(self) -> float:
-        if self.wallet:
-            return await self.wallet.get_usdc_balance()
+        if self.executor:
+            return await self.executor.get_polymarket_balance()
         return 0.0
 
     async def _cmd_status(
@@ -212,15 +209,11 @@ class TelegramBot:
     ) -> None:
         free_usdc = await self._get_free_usdc()
         balance = await self.portfolio.log_balance(free_usdc)
-        wallet_info = ""
-        if self.wallet:
-            wallet_info = f"\n🔑 Кошелёк: `{self.wallet.address}`"
         await update.message.reply_text(  # type: ignore[union-attr]
-            f"💰 *Баланс:*\n"
+            f"💰 *Баланс Polymarket:*\n"
             f"Свободно: ${balance.free_usdc:.2f} USDC\n"
             f"В позициях: ~${balance.positions_value:.2f}\n"
-            f"Итого: ~${balance.total_value:.2f}"
-            f"{wallet_info}",
+            f"Итого: ~${balance.total_value:.2f}",
             parse_mode="Markdown",
         )
 

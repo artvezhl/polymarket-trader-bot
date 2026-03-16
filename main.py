@@ -20,7 +20,6 @@ from trading.portfolio import PortfolioManager
 from trading.scanner import MarketScanner
 from utils.config import AppConfig, apply_db_overrides, load_config
 from utils.logger import logger
-from utils.wallet import WalletManager
 
 
 class TradingEngine:
@@ -30,14 +29,8 @@ class TradingEngine:
         self.scanner = MarketScanner(config.trading)
         self.portfolio = PortfolioManager(self.db)
         self.executor = TradeExecutor(config, self.db)
-        self.wallet: WalletManager | None = None
-        if config.secrets.private_key:
-            self.wallet = WalletManager(
-                config.secrets.private_key,
-                config.secrets.polygon_rpc_url,
-            )
         self.tg_bot = TelegramBot(
-            config, self.db, self.portfolio, self.executor, self.wallet
+            config, self.db, self.portfolio, self.executor
         )
         self.tg_bot.scanner = self.scanner
         self._shutdown = asyncio.Event()
@@ -116,9 +109,7 @@ class TradingEngine:
         existing_ids = await self.portfolio.get_existing_market_ids()
         opportunities = await self.scanner.scan(existing_ids)
 
-        deposit = 0.0
-        if self.wallet:
-            deposit = await self.wallet.get_usdc_balance()
+        deposit = await self.executor.get_polymarket_balance()
         if deposit < self.config.trading.min_bet_usd:
             logger.debug("USDC balance too low ($%.2f), skipping", deposit)
             return
@@ -156,9 +147,7 @@ class TradingEngine:
                 pass
 
             try:
-                free_usdc = 0.0
-                if self.wallet:
-                    free_usdc = await self.wallet.get_usdc_balance()
+                free_usdc = await self.executor.get_polymarket_balance()
                 balance = await self.portfolio.log_balance(free_usdc)
                 open_count = await self.portfolio.get_open_positions_count()
                 trades_today = await self.db.get_trades_count_today()
