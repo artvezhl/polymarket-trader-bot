@@ -39,6 +39,7 @@ class TradeExecutor:
                 key=self.config.secrets.private_key,
                 chain_id=137,
                 creds=creds,
+                signature_type=self.config.secrets.signature_type,
             )
         return self._client
 
