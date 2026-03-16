@@ -29,17 +29,23 @@ class TradeExecutor:
     @property
     def client(self) -> ClobClient:
         if self._client is None:
+            from eth_account import Account
+
             creds = ApiCreds(
                 api_key=self.config.secrets.polymarket_api_key,
                 api_secret=self.config.secrets.polymarket_api_secret,
                 api_passphrase=self.config.secrets.polymarket_api_passphrase,
             )
+            funder = Account.from_key(
+                self.config.secrets.private_key
+            ).address
             self._client = ClobClient(
                 host="https://clob.polymarket.com",
                 key=self.config.secrets.private_key,
                 chain_id=137,
                 creds=creds,
                 signature_type=self.config.secrets.signature_type,
+                funder=funder,
             )
         return self._client
 
