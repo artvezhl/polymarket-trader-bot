@@ -42,7 +42,7 @@ class SecretsConfig:
     polymarket_api_secret: str = ""
     polymarket_api_passphrase: str = ""
     polygon_rpc_url: str = "https://polygon-rpc.com"
-    signature_type: int = 2
+    signature_type: int = 0
 
 
 @dataclass
