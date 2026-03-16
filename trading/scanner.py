@@ -134,9 +134,11 @@ class MarketScanner:
 
             min_order = _parse_float(market.get("orderMinSize"))
 
+            tick = _parse_float(market.get("orderPriceMinTickSize"), 0.001)
+
             for i, (outcome, price_str, token_id) in enumerate(zip(outcomes, prices, token_ids)):
                 price = _parse_float(price_str)
-                if 0 < price <= self.config.max_probability:
+                if price >= tick and 0 < price <= self.config.max_probability:
                     opportunities.append(
                         MarketOpportunity(
                             market_id=market_id,
