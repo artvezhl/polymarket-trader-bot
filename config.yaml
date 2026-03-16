@@ -6,7 +6,8 @@ trading:
   min_liquidity: 5000
   max_open_positions: 50
   scan_interval_sec: 60
-  skip_categories: []
+  skip_keywords: []
+  min_end_date_days: 1
   price_check_interval_sec: 120
   price_spike_multiplier: 10.0
 

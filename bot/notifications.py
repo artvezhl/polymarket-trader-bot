@@ -94,13 +94,15 @@ def format_settings(cfg: TradingConfig) -> str:
         f"💧 Мин. ликвидность: *${cfg.min_liquidity:,.0f}*\n"
         f"📊 Макс. позиций: *{cfg.max_open_positions}*\n"
         f"⏱ Интервал скана: *{cfg.scan_interval_sec}с*\n"
+        f"📅 Мин. до закрытия: *{cfg.min_end_date_days} дн.*\n"
         f"🔍 Проверка цен: *{cfg.price_check_interval_sec}с*\n"
         f"🚀 Алерт при росте: *×{cfg.price_spike_multiplier:.0f}*\n"
-        f"🚫 Исключения: *{', '.join(cfg.skip_categories) or 'нет'}*\n\n"
+        f"🚫 Исключения: *{', '.join(cfg.skip_keywords) or 'нет'}*\n\n"
         f"_Изменить:_ /set\\_max\\_prob, /set\\_bet\\_size,\n"
         f"/set\\_min\\_bet, /set\\_max\\_bet,\n"
         f"/set\\_max\\_positions, /set\\_liquidity,\n"
-        f"/set\\_interval, /set\\_spike\\_mult"
+        f"/set\\_interval, /set\\_spike\\_mult,\n"
+        f"/set\\_min\\_days, /set\\_skip\\_words"
     )
 
 

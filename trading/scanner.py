@@ -98,22 +98,29 @@ class MarketScanner:
             if market_id in existing_market_ids:
                 continue
 
-            category = market.get("category", "")
-            if category in self.config.skip_categories:
-                continue
+            question = market.get("question", "")
+            slug = market.get("slug", "")
+            search_text = f"{question} {slug}".lower()
+
+            if self.config.skip_keywords:
+                if any(kw.lower() in search_text for kw in self.config.skip_keywords):
+                    continue
 
             liquidity = _parse_float(market.get("liquidity"))
             if liquidity < self.config.min_liquidity:
                 continue
 
+            min_hours = self.config.min_end_date_days * 24
             end_date_str = market.get("endDate") or market.get("end_date_iso")
             end_date: datetime | None = None
             if end_date_str:
                 try:
-                    end_date = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
+                    end_date = datetime.fromisoformat(
+                        end_date_str.replace("Z", "+00:00")
+                    )
                     delta = end_date - datetime.now(timezone.utc)
                     hours_until_close = delta.total_seconds() / 3600
-                    if hours_until_close < 24:
+                    if hours_until_close < min_hours:
                         continue
                 except (ValueError, TypeError):
                     pass
@@ -133,13 +140,13 @@ class MarketScanner:
                     opportunities.append(
                         MarketOpportunity(
                             market_id=market_id,
-                            question=market.get("question", "Unknown"),
+                            question=question or "Unknown",
                             probability=price,
                             outcome=outcome,
                             token_id=token_id,
                             liquidity=liquidity,
                             end_date=end_date,
-                            category=category,
+                            category=market.get("category", ""),
                             min_order_size=min_order,
                         )
                     )

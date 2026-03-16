@@ -18,7 +18,7 @@ def app_config(tmp_path) -> AppConfig:
             min_liquidity=5000,
             max_open_positions=50,
             scan_interval_sec=60,
-            skip_categories=["Sports"],
+            skip_keywords=["sports"],
         ),
         reporting=ReportingConfig(status_interval_min=60),
         telegram=TelegramConfig(admin_ids=[123456789], bot_token="test_token"),

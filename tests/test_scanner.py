@@ -70,7 +70,7 @@ class TestMarketScanner:
         config = TradingConfig(
             max_probability=0.05,
             min_liquidity=5000,
-            skip_categories=["Sports"],
+            skip_keywords=["sports"],
         )
         return MarketScanner(config)
 
@@ -96,8 +96,11 @@ class TestMarketScanner:
         result = scanner.filter_markets(markets, {"cond_001"})
         assert len(result) == 0
 
-    def test_filter_skips_category(self, scanner: MarketScanner):
-        markets = [_make_market(prices="0.97,0.03", category="Sports")]
+    def test_filter_skips_keyword(self, scanner: MarketScanner):
+        markets = [_make_market(
+            prices="0.97,0.03",
+            question="Will Sports Team win?",
+        )]
         result = scanner.filter_markets(markets, set())
         assert len(result) == 0
 

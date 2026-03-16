@@ -48,6 +48,8 @@ BOT_COMMANDS = [
     BotCommand("set_liquidity", "Мин. ликвидность рынка в $"),
     BotCommand("set_interval", "Интервал сканирования (сек)"),
     BotCommand("set_spike_mult", "Множитель алерта цены"),
+    BotCommand("set_min_days", "Мин. дней до закрытия события"),
+    BotCommand("set_skip_words", "Исключить по ключевым словам"),
     BotCommand("close", "Закрыть позицию"),
     BotCommand("scan", "Сканировать рынки (показать кол-во)"),
     BotCommand("sync", "Синхронизировать с CLOB API"),
@@ -113,6 +115,8 @@ class TelegramBot:
             ("set_liquidity", self._cmd_set_liquidity),
             ("set_interval", self._cmd_set_interval),
             ("set_spike_mult", self._cmd_set_spike_mult),
+            ("set_min_days", self._cmd_set_min_days),
+            ("set_skip_words", self._cmd_set_skip_words),
             ("close", self._cmd_close),
             ("scan", self._cmd_scan),
             ("sync", self._cmd_sync),
@@ -256,7 +260,7 @@ class TelegramBot:
 
     # ── Setting commands ─────────────────────────────────────────
 
-    async def _persist(self, db_key: str, value: float | int) -> None:
+    async def _persist(self, db_key: str, value: float | int | str) -> None:
         await self.db.set_config(db_key, str(value))
 
     async def _cmd_set_max_prob(
@@ -498,6 +502,74 @@ class TelegramBot:
                 "❌ Укажите число > 1, например: /set\\_spike\\_mult 5",
                 parse_mode="Markdown",
             )
+
+    async def _cmd_set_min_days(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        cur = self.config.trading.min_end_date_days
+        if not context.args:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                f"Мин. дней до закрытия: *{cur}*\n"
+                f"Изменить: /set\\_min\\_days 7",
+                parse_mode="Markdown",
+            )
+            return
+        try:
+            value = int(context.args[0])
+            if value < 0:
+                raise ValueError
+            self.config.trading.min_end_date_days = value
+            await self._persist("trading.min_end_date_days", value)
+            await update.message.reply_text(  # type: ignore[union-attr]
+                f"✅ Мин. дней: {cur} → *{value}* 💾",
+                parse_mode="Markdown",
+            )
+        except ValueError:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "❌ Укажите число >= 0: /set\\_min\\_days 7",
+                parse_mode="Markdown",
+            )
+
+    async def _cmd_set_skip_words(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        cur = self.config.trading.skip_keywords
+        if not context.args:
+            words = ", ".join(cur) if cur else "нет"
+            await update.message.reply_text(  # type: ignore[union-attr]
+                f"🚫 Исключённые слова: *{words}*\n\n"
+                f"Добавить: /set\\_skip\\_words NBA NHL crypto\n"
+                f"Очистить: /set\\_skip\\_words clear",
+                parse_mode="Markdown",
+            )
+            return
+
+        import json
+
+        if context.args[0].lower() == "clear":
+            self.config.trading.skip_keywords = []
+            await self._persist(
+                "trading.skip_keywords",
+                json.dumps([]),  # type: ignore[arg-type]
+            )
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "✅ Фильтр слов очищен 💾"
+            )
+            return
+
+        words = [w.lower() for w in context.args]
+        merged = list(set(cur + words))
+        self.config.trading.skip_keywords = merged
+        await self._persist(
+            "trading.skip_keywords",
+            json.dumps(merged),  # type: ignore[arg-type]
+        )
+        added = [w for w in words if w not in cur]
+        await update.message.reply_text(  # type: ignore[union-attr]
+            f"✅ Добавлено: *{', '.join(added)}*\n"
+            f"Всего исключений: *{', '.join(merged)}* 💾",
+            parse_mode="Markdown",
+        )
 
     # ── Close position ───────────────────────────────────────────
 

@@ -24,7 +24,7 @@ class TestLoadConfig:
                 "max_probability": 0.03,
                 "bet_size_pct": 0.02,
                 "min_liquidity": 10000,
-                "skip_categories": ["Sports", "Entertainment"],
+                "skip_keywords": ["sports", "entertainment"],
             },
             "reporting": {"status_interval_min": 30},
             "telegram": {"admin_ids": [111, 222]},
@@ -39,7 +39,7 @@ class TestLoadConfig:
         assert config.trading.max_probability == 0.03
         assert config.trading.bet_size_pct == 0.02
         assert config.trading.min_liquidity == 10000
-        assert config.trading.skip_categories == ["Sports", "Entertainment"]
+        assert config.trading.skip_keywords == ["sports", "entertainment"]
         assert config.reporting.status_interval_min == 30
         assert config.telegram.admin_ids == [111, 222]
 
@@ -69,4 +69,4 @@ class TestTradingConfig:
         cfg = TradingConfig()
         assert cfg.max_probability == 0.05
         assert cfg.max_open_positions == 50
-        assert cfg.skip_categories == []
+        assert cfg.skip_keywords == []

@@ -17,7 +17,8 @@ class TradingConfig:
     min_liquidity: float = 5000.0
     max_open_positions: int = 50
     scan_interval_sec: int = 60
-    skip_categories: list[str] = field(default_factory=list)
+    skip_keywords: list[str] = field(default_factory=list)
+    min_end_date_days: int = 1
     price_check_interval_sec: int = 120
     price_spike_multiplier: float = 10.0
 
@@ -104,9 +105,12 @@ TRADING_CONFIG_KEYS = {
     "min_liquidity": float,
     "max_open_positions": int,
     "scan_interval_sec": int,
+    "min_end_date_days": int,
     "price_check_interval_sec": int,
     "price_spike_multiplier": float,
 }
+
+TRADING_LIST_KEYS = {"skip_keywords"}
 
 REPORTING_CONFIG_KEYS = {
     "positions_report_interval_hours": int,
@@ -116,11 +120,21 @@ REPORTING_CONFIG_KEYS = {
 
 def apply_db_overrides(config: AppConfig, db_values: dict[str, str]) -> None:
     """Apply config overrides stored in the database."""
+    import json as _json
+
     for key, cast in TRADING_CONFIG_KEYS.items():
         db_key = f"trading.{key}"
         if db_key in db_values:
             try:
                 setattr(config.trading, key, cast(db_values[db_key]))
+            except (ValueError, TypeError):
+                pass
+
+    for key in TRADING_LIST_KEYS:
+        db_key = f"trading.{key}"
+        if db_key in db_values:
+            try:
+                setattr(config.trading, key, _json.loads(db_values[db_key]))
             except (ValueError, TypeError):
                 pass
 

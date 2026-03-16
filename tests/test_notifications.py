@@ -166,7 +166,7 @@ class TestFormatSettings:
             min_liquidity=15000,
             max_open_positions=30,
             scan_interval_sec=120,
-            skip_categories=["Sports", "Entertainment"],
+            skip_keywords=["sports", "entertainment"],
         )
         msg = format_settings(cfg)
         assert "3.0%" in msg
@@ -176,7 +176,7 @@ class TestFormatSettings:
         assert "$15,000" in msg
         assert "30" in msg
         assert "120с" in msg
-        assert "Sports, Entertainment" in msg
+        assert "sports, entertainment" in msg
 
 
 class TestFormatPriceSpike:
