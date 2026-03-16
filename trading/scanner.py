@@ -23,6 +23,8 @@ class MarketOpportunity:
     end_date: datetime | None
     category: str
     min_order_size: float = 0.0
+    tick_size: str = "0.01"
+    neg_risk: bool = False
 
 
 def _parse_list_field(value: str | list | None) -> list[str]:
@@ -133,8 +135,11 @@ class MarketScanner:
                 continue
 
             min_order = _parse_float(market.get("orderMinSize"))
+            raw_tick = market.get("orderPriceMinTickSize")
+            tick_size_str = str(raw_tick) if raw_tick else "0.01"
+            is_neg_risk = bool(market.get("negRisk", False))
 
-            tick = _parse_float(market.get("orderPriceMinTickSize"), 0.001)
+            tick = _parse_float(raw_tick, 0.001)
 
             for i, (outcome, price_str, token_id) in enumerate(zip(outcomes, prices, token_ids)):
                 price = _parse_float(price_str)
@@ -150,6 +155,8 @@ class MarketScanner:
                             end_date=end_date,
                             category=market.get("category", ""),
                             min_order_size=min_order,
+                            tick_size=tick_size_str,
+                            neg_risk=is_neg_risk,
                         )
                     )
 
