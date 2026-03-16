@@ -1,0 +1,17 @@
+services:
+  bot:
+    build: .
+    container_name: polymarket-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - bot-data:/app/data
+      - bot-logs:/app/logs
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+
+volumes:
+  bot-data:
+  bot-logs:

@@ -1,0 +1,19 @@
+trading:
+  max_probability: 0.05
+  bet_size_pct: 0.01
+  min_bet_usd: 1.0
+  max_bet_usd: 10.0
+  min_liquidity: 5000
+  max_open_positions: 50
+  scan_interval_sec: 60
+  skip_keywords: []
+  min_end_date_days: 1
+  price_check_interval_sec: 120
+  price_spike_multiplier: 10.0
+
+reporting:
+  status_interval_min: 60
+  positions_report_interval_hours: 4
+
+telegram:
+  admin_ids: [86157241, 199140321]

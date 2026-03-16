@@ -1,0 +1,254 @@
+from __future__ import annotations
+
+from datetime import datetime
+
+import aiosqlite
+
+from database.models import BalanceLog, Trade, TradeStatus
+from utils.logger import logger
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS config (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    market_id TEXT,
+    question TEXT,
+    probability REAL,
+    bet_usd REAL,
+    potential_payout REAL,
+    outcome TEXT,
+    status TEXT DEFAULT 'open',
+    created_at TIMESTAMP,
+    resolved_at TIMESTAMP,
+    pnl REAL DEFAULT 0,
+    token_id TEXT DEFAULT '',
+    current_price REAL DEFAULT 0,
+    price_alert_sent INTEGER DEFAULT 0,
+    order_id TEXT DEFAULT '',
+    fill_price REAL DEFAULT 0,
+    fee_usd REAL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS balance_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    free_usdc REAL,
+    positions_value REAL,
+    total_value REAL,
+    timestamp TIMESTAMP
+);
+"""
+
+MIGRATIONS = [
+    "ALTER TABLE trades ADD COLUMN current_price REAL DEFAULT 0",
+    "ALTER TABLE trades ADD COLUMN price_alert_sent INTEGER DEFAULT 0",
+    "ALTER TABLE trades ADD COLUMN order_id TEXT DEFAULT ''",
+    "ALTER TABLE trades ADD COLUMN fill_price REAL DEFAULT 0",
+    "ALTER TABLE trades ADD COLUMN fee_usd REAL DEFAULT 0",
+]
+
+
+class Database:
+    def __init__(self, db_path: str = "data/bot.db"):
+        self._db_path = db_path
+        self._conn: aiosqlite.Connection | None = None
+
+    async def connect(self) -> None:
+        self._conn = await aiosqlite.connect(self._db_path)
+        await self._conn.executescript(SCHEMA)
+        for sql in MIGRATIONS:
+            try:
+                await self._conn.execute(sql)
+            except Exception:
+                pass
+        await self._conn.commit()
+        logger.info("Database connected: %s", self._db_path)
+
+    async def close(self) -> None:
+        if self._conn:
+            await self._conn.close()
+
+    @property
+    def conn(self) -> aiosqlite.Connection:
+        if self._conn is None:
+            raise RuntimeError("Database not connected. Call connect() first.")
+        return self._conn
+
+    async def insert_trade(self, trade: Trade) -> int:
+        cursor = await self.conn.execute(
+            """INSERT INTO trades
+               (market_id, question, probability, bet_usd, potential_payout,
+                outcome, status, created_at, resolved_at, pnl, token_id,
+                current_price, price_alert_sent,
+                order_id, fill_price, fee_usd)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                trade.market_id,
+                trade.question,
+                trade.probability,
+                trade.bet_usd,
+                trade.potential_payout,
+                trade.outcome,
+                trade.status.value,
+                trade.created_at.isoformat(),
+                trade.resolved_at.isoformat() if trade.resolved_at else None,
+                trade.pnl,
+                trade.token_id,
+                trade.current_price,
+                int(trade.price_alert_sent),
+                trade.order_id,
+                trade.fill_price,
+                trade.fee_usd,
+            ),
+        )
+        await self.conn.commit()
+        return cursor.lastrowid  # type: ignore[return-value]
+
+    async def update_trade_status(
+        self, trade_id: int, status: TradeStatus, pnl: float = 0.0
+    ) -> None:
+        await self.conn.execute(
+            """UPDATE trades SET status = ?, pnl = ?, resolved_at = ?
+               WHERE id = ?""",
+            (status.value, pnl, datetime.now().isoformat(), trade_id),
+        )
+        await self.conn.commit()
+
+    async def get_open_trades(self) -> list[Trade]:
+        cursor = await self.conn.execute(
+            "SELECT * FROM trades WHERE status = ?",
+            (TradeStatus.OPEN.value,),
+        )
+        rows = await cursor.fetchall()
+        return [Trade.from_row(row) for row in rows]
+
+    async def get_trade_by_market(self, market_id: str) -> Trade | None:
+        cursor = await self.conn.execute(
+            "SELECT * FROM trades WHERE market_id = ? AND status = ?",
+            (market_id, TradeStatus.OPEN.value),
+        )
+        row = await cursor.fetchone()
+        return Trade.from_row(row) if row else None
+
+    async def get_recent_trades(self, limit: int = 20) -> list[Trade]:
+        cursor = await self.conn.execute(
+            "SELECT * FROM trades ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [Trade.from_row(row) for row in rows]
+
+    async def get_pnl_since(self, since: datetime) -> float:
+        cursor = await self.conn.execute(
+            "SELECT COALESCE(SUM(pnl), 0) FROM trades WHERE resolved_at >= ?",
+            (since.isoformat(),),
+        )
+        row = await cursor.fetchone()
+        return float(row[0]) if row else 0.0
+
+    async def get_total_pnl(self) -> float:
+        cursor = await self.conn.execute(
+            "SELECT COALESCE(SUM(pnl), 0) FROM trades WHERE status != ?",
+            (TradeStatus.OPEN.value,),
+        )
+        row = await cursor.fetchone()
+        return float(row[0]) if row else 0.0
+
+    async def get_trades_count_today(self) -> int:
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        cursor = await self.conn.execute(
+            "SELECT COUNT(*) FROM trades WHERE created_at >= ?",
+            (today.isoformat(),),
+        )
+        row = await cursor.fetchone()
+        return int(row[0]) if row else 0
+
+    async def insert_balance_log(self, log: BalanceLog) -> None:
+        await self.conn.execute(
+            """INSERT INTO balance_log (free_usdc, positions_value, total_value, timestamp)
+               VALUES (?, ?, ?, ?)""",
+            (log.free_usdc, log.positions_value, log.total_value, log.timestamp.isoformat()),
+        )
+        await self.conn.commit()
+
+    async def update_trade_price(
+        self, trade_id: int, current_price: float
+    ) -> None:
+        await self.conn.execute(
+            "UPDATE trades SET current_price = ? WHERE id = ?",
+            (current_price, trade_id),
+        )
+        await self.conn.commit()
+
+    async def mark_price_alert_sent(self, trade_id: int) -> None:
+        await self.conn.execute(
+            "UPDATE trades SET price_alert_sent = 1 WHERE id = ?",
+            (trade_id,),
+        )
+        await self.conn.commit()
+
+    async def close_trade(
+        self, trade_id: int, pnl: float, status: TradeStatus
+    ) -> None:
+        await self.conn.execute(
+            """UPDATE trades SET status = ?, pnl = ?, resolved_at = ?
+               WHERE id = ?""",
+            (status.value, pnl, datetime.now().isoformat(), trade_id),
+        )
+        await self.conn.commit()
+
+    async def get_open_trades_by_price(self) -> list[Trade]:
+        cursor = await self.conn.execute(
+            """SELECT * FROM trades WHERE status = ?
+               ORDER BY current_price DESC""",
+            (TradeStatus.OPEN.value,),
+        )
+        rows = await cursor.fetchall()
+        return [Trade.from_row(row) for row in rows]
+
+    async def get_config(self, key: str) -> str | None:
+        cursor = await self.conn.execute(
+            "SELECT value FROM config WHERE key = ?", (key,)
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
+    async def set_config(self, key: str, value: str) -> None:
+        await self.conn.execute(
+            "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+        await self.conn.commit()
+
+    async def update_trade_fill(
+        self, trade_id: int, order_id: str, fill_price: float, fee_usd: float
+    ) -> None:
+        await self.conn.execute(
+            """UPDATE trades SET order_id = ?, fill_price = ?, fee_usd = ?
+               WHERE id = ?""",
+            (order_id, fill_price, fee_usd, trade_id),
+        )
+        await self.conn.commit()
+
+    async def get_total_fees(self) -> float:
+        cursor = await self.conn.execute(
+            "SELECT COALESCE(SUM(fee_usd), 0) FROM trades"
+        )
+        row = await cursor.fetchone()
+        return float(row[0]) if row else 0.0
+
+    async def get_fees_since(self, since: datetime) -> float:
+        cursor = await self.conn.execute(
+            "SELECT COALESCE(SUM(fee_usd), 0) FROM trades WHERE created_at >= ?",
+            (since.isoformat(),),
+        )
+        row = await cursor.fetchone()
+        return float(row[0]) if row else 0.0
+
+    async def get_all_config(self) -> dict[str, str]:
+        cursor = await self.conn.execute("SELECT key, value FROM config")
+        rows = await cursor.fetchall()
+        return {row[0]: row[1] for row in rows}
