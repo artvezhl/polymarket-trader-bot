@@ -86,7 +86,7 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> App
         polymarket_api_secret=os.getenv("POLYMARKET_API_SECRET", ""),
         polymarket_api_passphrase=os.getenv("POLYMARKET_API_PASSPHRASE", ""),
         polygon_rpc_url=os.getenv("POLYGON_RPC_URL", "https://polygon-rpc.com"),
-        signature_type=int(os.getenv("POLYMARKET_SIG_TYPE", "2")),
+        signature_type=int(os.getenv("POLYMARKET_SIG_TYPE", "0")),
     )
 
     return AppConfig(
