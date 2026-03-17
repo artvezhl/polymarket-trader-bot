@@ -67,7 +67,7 @@ class TradingEngine:
         tasks = [
             asyncio.create_task(self.btc_feed.start(), name="btc_feed"),
             asyncio.create_task(self._btc_strategy_loop(), name="btc_strategy"),
-            asyncio.create_task(self._scanner_loop(), name="scanner"),
+            # asyncio.create_task(self._scanner_loop(), name="scanner"),
             asyncio.create_task(self._position_monitor_loop(), name="position_monitor"),
             asyncio.create_task(self._status_reporter_loop(), name="status_reporter"),
             asyncio.create_task(self._price_monitor_loop(), name="price_monitor"),
