@@ -66,8 +66,6 @@ class TradeExecutor:
 
         resolved = 0
         for db_trade in db_open:
-            if not db_trade.order_id:
-                continue
             market_id = db_trade.market_id
             try:
                 market_data = await asyncio.to_thread(
@@ -75,27 +73,46 @@ class TradeExecutor:
                 )
                 if not market_data:
                     continue
+
                 closed = market_data.get("closed", False)
                 if not closed:
                     continue
 
-                winning = market_data.get("winning_outcome")
-                if winning is None:
-                    continue
+                tokens = market_data.get("tokens", [])
+                winning_outcome = None
+                for tok in tokens:
+                    price = float(tok.get("price", 0))
+                    if price >= 0.95:
+                        winning_outcome = tok.get("outcome", "")
+                        break
 
-                won = db_trade.outcome.lower() == str(winning).lower()
-                pnl = (
-                    db_trade.potential_payout - db_trade.bet_usd
-                    if won
-                    else -db_trade.bet_usd
-                )
-                status = TradeStatus.WON if won else TradeStatus.LOST
+                if winning_outcome is None:
+                    status = TradeStatus.RESOLVED
+                    pnl = -db_trade.bet_usd
+                else:
+                    won = (
+                        db_trade.outcome.lower()
+                        == winning_outcome.lower()
+                    )
+                    pnl = (
+                        db_trade.potential_payout - db_trade.bet_usd
+                        if won
+                        else -db_trade.bet_usd
+                    )
+                    status = TradeStatus.WON if won else TradeStatus.LOST
+
                 await db.update_trade_status(
                     db_trade.id, status, pnl  # type: ignore[arg-type]
                 )
                 resolved += 1
-            except Exception:
-                pass
+                logger.info(
+                    "Synced: %s → %s (pnl=$%.2f)",
+                    db_trade.question[:30],
+                    status.value,
+                    pnl,
+                )
+            except Exception as e:
+                logger.debug("Sync skip %s: %s", market_id[:16], e)
 
         return {
             "clob_trades": len(clob_trades),
