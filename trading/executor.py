@@ -110,10 +110,11 @@ class TradeExecutor:
         if price <= 0:
             return None
 
-        shares = math.floor(bet_usd / price)
-        if shares < 1:
-            return None
+        min_shares = math.ceil(1.0 / price)
+        shares = max(math.floor(bet_usd / price), min_shares)
         bet_usd = round(shares * price, 2)
+        if bet_usd > deposit * self.config.strategy.max_exposure_pct:
+            return None
         potential_payout = shares
 
         try:
