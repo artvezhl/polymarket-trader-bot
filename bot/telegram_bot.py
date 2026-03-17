@@ -56,6 +56,8 @@ BOT_COMMANDS = [
     BotCommand("auto_close", "Вкл/выкл авто-закрытие по профиту"),
     BotCommand("set_take_profit", "Установить % take profit"),
     BotCommand("set_stop_loss", "Установить % stop loss"),
+    BotCommand("hedge", "Вкл/выкл хеджирование позиций"),
+    BotCommand("set_hedge", "Настроить триггер и размер хеджа"),
     BotCommand("strategy", "Статус BTC 5-min стратегии"),
     BotCommand("edge", "Текущие сигналы и edge"),
     BotCommand("scan", "Сканировать рынки (показать кол-во)"),
@@ -132,6 +134,8 @@ class TelegramBot:
             ("auto_close", self._cmd_auto_close),
             ("set_take_profit", self._cmd_set_take_profit),
             ("set_stop_loss", self._cmd_set_stop_loss),
+            ("hedge", self._cmd_hedge),
+            ("set_hedge", self._cmd_set_hedge),
             ("strategy", self._cmd_strategy),
             ("edge", self._cmd_edge),
             ("scan", self._cmd_scan),
@@ -727,6 +731,63 @@ class TelegramBot:
         except ValueError:
             await update.message.reply_text(  # type: ignore[union-attr]
                 "❌ Укажите % > 0, например: /set\\_stop\\_loss 5",
+                parse_mode="Markdown",
+            )
+
+    async def _cmd_hedge(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not self.btc_strategy:
+            await update.message.reply_text("❌ Стратегия не инициализирована")  # type: ignore[union-attr]
+            return
+
+        self.btc_strategy.hedge_enabled = (
+            not self.btc_strategy.hedge_enabled
+        )
+        state = self.btc_strategy.hedge_enabled
+        icon = "🟢" if state else "🔴"
+        await update.message.reply_text(  # type: ignore[union-attr]
+            f"🛡 {icon} Хеджирование: *{'вкл' if state else 'выкл'}*\n"
+            f"Триггер: при профите *{self.btc_strategy.hedge_trigger_pct * 100:.0f}%*\n"
+            f"Размер: *{self.btc_strategy.hedge_ratio * 100:.0f}%* от прибыли\n\n"
+            f"Настроить: /set\\_hedge 5 50\n"
+            f"_(триггер 5%, размер 50% от прибыли)_",
+            parse_mode="Markdown",
+        )
+
+    async def _cmd_set_hedge(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not self.btc_strategy:
+            await update.message.reply_text("❌ Стратегия не инициализирована")  # type: ignore[union-attr]
+            return
+
+        if not context.args or len(context.args) < 2:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                f"🛡 *Настройки хеджа:*\n"
+                f"Триггер: *{self.btc_strategy.hedge_trigger_pct * 100:.0f}%*\n"
+                f"Размер: *{self.btc_strategy.hedge_ratio * 100:.0f}%* от прибыли\n\n"
+                f"Использование: /set\\_hedge <триггер%> <размер%>\n"
+                f"Пример: /set\\_hedge 5 50",
+                parse_mode="Markdown",
+            )
+            return
+        try:
+            trigger = float(context.args[0]) / 100
+            ratio = float(context.args[1]) / 100
+            if trigger <= 0 or ratio <= 0 or ratio > 1:
+                raise ValueError
+            self.btc_strategy.hedge_trigger_pct = trigger
+            self.btc_strategy.hedge_ratio = ratio
+            await update.message.reply_text(  # type: ignore[union-attr]
+                f"✅ Хедж: триггер *{trigger * 100:.0f}%*, "
+                f"размер *{ratio * 100:.0f}%* от прибыли",
+                parse_mode="Markdown",
+            )
+        except ValueError:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "❌ Формат: /set\\_hedge <триггер> <размер>\n"
+                "Пример: /set\\_hedge 5 50",
                 parse_mode="Markdown",
             )
 
