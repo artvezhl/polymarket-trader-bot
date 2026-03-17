@@ -305,9 +305,11 @@ class TradingEngine:
                         redeemed_count += 1
 
                 if redeemed_count or won_trades:
-                    await self.tg_bot.send_message(
-                        f"💰 Авто-redeem: зачислено {redeemed_count}/{len(won_trades)} выигрышных позиций."
+                    msg = (
+                        f"💰 Авто-redeem: зачислено "
+                        f"{redeemed_count}/{len(won_trades)} выигрышных позиций."
                     )
+                    await self.tg_bot.send_message(msg)
             except Exception as e:
                 logger.error("Redeem loop error: %s", e)
 

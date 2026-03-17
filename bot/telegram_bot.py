@@ -25,7 +25,6 @@ from bot.notifications import (
     format_status_report,
 )
 from database.db import Database
-from database.models import TradeStatus
 from trading.executor import TradeExecutor
 from trading.portfolio import PortfolioManager
 from trading.redeemer import Redeemer

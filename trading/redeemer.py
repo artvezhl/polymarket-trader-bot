@@ -3,10 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from eth_account import Account
-try:
-    from eth_account.messages import encode_structured_data
-except ImportError:
-    from eth_account.messages import encode_typed_data as encode_structured_data
+from eth_account.messages import encode_structured_data
 from web3 import Web3
 
 from utils.config import SecretsConfig
