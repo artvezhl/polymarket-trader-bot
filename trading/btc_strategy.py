@@ -76,6 +76,42 @@ class BtcStrategy:
         self.reverse_signal = False
         self._hedged_trades: set[int] = set()
 
+    async def load_settings(self) -> None:
+        """Load strategy settings from DB."""
+
+        keys = {
+            "strategy.auto_close": ("auto_close_enabled", bool),
+            "strategy.reverse_signal": ("reverse_signal", bool),
+            "strategy.hedge_enabled": ("hedge_enabled", bool),
+            "strategy.take_profit_pct": ("take_profit_pct", float),
+            "strategy.stop_loss_pct": ("stop_loss_pct", float),
+            "strategy.hedge_trigger_pct": ("hedge_trigger_pct", float),
+            "strategy.hedge_ratio": ("hedge_ratio", float),
+        }
+        for db_key, (attr, cast) in keys.items():
+            val = await self.db.get_config(db_key)
+            if val is not None:
+                if cast is bool:
+                    setattr(self, attr, val == "1")
+                else:
+                    setattr(self, attr, cast(val))
+        logger.info(
+            "Strategy settings loaded: reverse=%s auto_close=%s "
+            "tp=%.1f%% sl=%.1f%% hedge=%s",
+            self.reverse_signal,
+            self.auto_close_enabled,
+            self.take_profit_pct * 100,
+            self.stop_loss_pct * 100,
+            self.hedge_enabled,
+        )
+
+    async def save_setting(self, key: str, value) -> None:
+        """Save a single strategy setting to DB."""
+        if isinstance(value, bool):
+            await self.db.set_config(f"strategy.{key}", "1" if value else "0")
+        else:
+            await self.db.set_config(f"strategy.{key}", str(value))
+
     def set_notify(self, callback) -> None:
         self._notify_callback = callback
 

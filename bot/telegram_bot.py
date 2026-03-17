@@ -665,6 +665,7 @@ class TelegramBot:
             not self.btc_strategy.auto_close_enabled
         )
         state = self.btc_strategy.auto_close_enabled
+        await self.btc_strategy.save_setting("auto_close", state)
         icon = "🟢" if state else "🔴"
         await update.message.reply_text(  # type: ignore[union-attr]
             f"{icon} Авто-закрытие: *{'вкл' if state else 'выкл'}*\n"
@@ -694,9 +695,10 @@ class TelegramBot:
             if value <= 0:
                 raise ValueError
             self.btc_strategy.take_profit_pct = value
+            await self.btc_strategy.save_setting("take_profit_pct", value)
             await update.message.reply_text(  # type: ignore[union-attr]
                 f"✅ Take profit: {cur * 100:.1f}% → "
-                f"*{value * 100:.1f}%*",
+                f"*{value * 100:.1f}%* 💾",
                 parse_mode="Markdown",
             )
         except ValueError:
@@ -725,9 +727,10 @@ class TelegramBot:
             if value <= 0:
                 raise ValueError
             self.btc_strategy.stop_loss_pct = value
+            await self.btc_strategy.save_setting("stop_loss_pct", value)
             await update.message.reply_text(  # type: ignore[union-attr]
                 f"✅ Stop loss: {cur * 100:.1f}% → "
-                f"*{value * 100:.1f}%*",
+                f"*{value * 100:.1f}%* 💾",
                 parse_mode="Markdown",
             )
         except ValueError:
@@ -747,6 +750,7 @@ class TelegramBot:
             not self.btc_strategy.reverse_signal
         )
         state = self.btc_strategy.reverse_signal
+        await self.btc_strategy.save_setting("reverse_signal", state)
         icon = "🔄" if state else "➡️"
         mode = "mean-reversion" if state else "momentum"
         await update.message.reply_text(  # type: ignore[union-attr]
@@ -768,6 +772,7 @@ class TelegramBot:
             not self.btc_strategy.hedge_enabled
         )
         state = self.btc_strategy.hedge_enabled
+        await self.btc_strategy.save_setting("hedge_enabled", state)
         icon = "🟢" if state else "🔴"
         await update.message.reply_text(  # type: ignore[union-attr]
             f"🛡 {icon} Хеджирование: *{'вкл' if state else 'выкл'}*\n"
@@ -802,9 +807,11 @@ class TelegramBot:
                 raise ValueError
             self.btc_strategy.hedge_trigger_pct = trigger
             self.btc_strategy.hedge_ratio = ratio
+            await self.btc_strategy.save_setting("hedge_trigger_pct", trigger)
+            await self.btc_strategy.save_setting("hedge_ratio", ratio)
             await update.message.reply_text(  # type: ignore[union-attr]
                 f"✅ Хедж: триггер *{trigger * 100:.0f}%*, "
-                f"размер *{ratio * 100:.0f}%* от прибыли",
+                f"размер *{ratio * 100:.0f}%* от прибыли 💾",
                 parse_mode="Markdown",
             )
         except ValueError:
