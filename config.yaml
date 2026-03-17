@@ -11,6 +11,20 @@ trading:
   price_check_interval_sec: 120
   price_spike_multiplier: 10.0
 
+strategy:
+  mode: btc_5min
+  edge_threshold: 0.03
+  update_interval_ms: 500
+  volatility_window_sec: 60
+  momentum_window_ticks: 20
+  max_exposure_pct: 0.10
+  trade_size_pct: 0.03
+  kelly_fraction: 0.25
+  late_market_sec: 25
+  take_profit_pct: 0.05
+  stop_loss_pct: 0.03
+  btc_exchange: binance
+
 reporting:
   status_interval_min: 60
   positions_report_interval_hours: 4

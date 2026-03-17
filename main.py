@@ -15,6 +15,8 @@ from bot.notifications import (
 )
 from bot.telegram_bot import TelegramBot
 from database.db import Database
+from trading.btc_feed import BtcFeed
+from trading.btc_strategy import BtcStrategy
 from trading.executor import TradeExecutor
 from trading.portfolio import PortfolioManager
 from trading.scanner import MarketScanner
@@ -29,10 +31,16 @@ class TradingEngine:
         self.scanner = MarketScanner(config.trading)
         self.portfolio = PortfolioManager(self.db)
         self.executor = TradeExecutor(config, self.db)
+        self.btc_feed = BtcFeed(exchange=config.strategy.btc_exchange)
+        self.btc_strategy = BtcStrategy(
+            config, self.db, self.executor, self.btc_feed
+        )
         self.tg_bot = TelegramBot(
             config, self.db, self.portfolio, self.executor
         )
         self.tg_bot.scanner = self.scanner
+        self.tg_bot.btc_strategy = self.btc_strategy
+        self.tg_bot.btc_feed = self.btc_feed
         self._shutdown = asyncio.Event()
 
     async def start(self) -> None:
@@ -54,7 +62,11 @@ class TradingEngine:
         await self.tg_bot.register_commands()
         logger.info("Telegram bot started")
 
+        self.btc_strategy.set_notify(self.tg_bot.send_message)
+
         tasks = [
+            asyncio.create_task(self.btc_feed.start(), name="btc_feed"),
+            asyncio.create_task(self._btc_strategy_loop(), name="btc_strategy"),
             asyncio.create_task(self._scanner_loop(), name="scanner"),
             asyncio.create_task(self._position_monitor_loop(), name="position_monitor"),
             asyncio.create_task(self._status_reporter_loop(), name="status_reporter"),
@@ -71,6 +83,9 @@ class TradingEngine:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+        await self.btc_feed.stop()
+        await self.btc_strategy.stop()
 
         if app.updater:
             await app.updater.stop()
@@ -164,6 +179,22 @@ class TradingEngine:
             except Exception as e:
                 logger.error("Status reporter error: %s", e)
 
+
+    async def _btc_strategy_loop(self) -> None:
+        await asyncio.sleep(5)
+        while not self._shutdown.is_set():
+            try:
+                if self.tg_bot.is_trading:
+                    await self.btc_strategy.run()
+            except Exception as e:
+                logger.error("BTC strategy error: %s", e)
+            try:
+                await asyncio.wait_for(
+                    self._shutdown.wait(), timeout=1
+                )
+                return
+            except asyncio.TimeoutError:
+                pass
 
     async def _price_monitor_loop(self) -> None:
         interval = self.config.trading.price_check_interval_sec

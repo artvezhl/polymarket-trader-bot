@@ -51,6 +51,8 @@ BOT_COMMANDS = [
     BotCommand("set_min_days", "Мин. дней до закрытия события"),
     BotCommand("set_skip_words", "Исключить по ключевым словам"),
     BotCommand("close", "Закрыть позицию"),
+    BotCommand("strategy", "Статус BTC 5-min стратегии"),
+    BotCommand("edge", "Текущие сигналы и edge"),
     BotCommand("scan", "Сканировать рынки (показать кол-во)"),
     BotCommand("sync", "Синхронизировать с CLOB API"),
     BotCommand("fees", "Статистика по комиссиям"),
@@ -73,6 +75,8 @@ class TelegramBot:
         self.portfolio = portfolio
         self.executor = executor
         self.scanner: MarketScanner | None = None
+        self.btc_strategy = None
+        self.btc_feed = None
         self.is_trading = False
         self._scan_cache: dict[int, tuple[int, list]] = {}
         self._app: Application | None = None  # type: ignore[type-arg]
@@ -118,6 +122,8 @@ class TelegramBot:
             ("set_min_days", self._cmd_set_min_days),
             ("set_skip_words", self._cmd_set_skip_words),
             ("close", self._cmd_close),
+            ("strategy", self._cmd_strategy),
+            ("edge", self._cmd_edge),
             ("scan", self._cmd_scan),
             ("sync", self._cmd_sync),
             ("fees", self._cmd_fees),
@@ -630,6 +636,101 @@ class TelegramBot:
                 "❌ Не удалось закрыть позицию. "
                 "Возможно, нет ликвидности или проблема с API."
             )
+
+    # ── BTC Strategy ──────────────────────────────────────────────
+
+    async def _cmd_strategy(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        cfg = self.config.strategy
+        feed_status = "🔴 offline"
+        btc_price = ""
+        if self.btc_feed and self.btc_feed.is_ready:
+            feed_status = "🟢 online"
+            btc_price = f" (${self.btc_feed.price:,.0f})"
+
+        markets_count = 0
+        if self.btc_strategy:
+            try:
+                markets = await self.btc_strategy.find_active_markets()
+                markets_count = len(markets)
+            except Exception:
+                pass
+
+        await update.message.reply_text(  # type: ignore[union-attr]
+            f"📈 *BTC 5-Min Strategy:*\n"
+            f"Режим: *{cfg.mode}*\n"
+            f"BTC feed: {feed_status}{btc_price}\n"
+            f"Активных рынков: *{markets_count}*\n"
+            f"Edge порог: *{cfg.edge_threshold * 100:.1f}%*\n"
+            f"Размер позиции: *{cfg.trade_size_pct * 100:.1f}%*\n"
+            f"Take profit: *{cfg.take_profit_pct * 100:.1f}%*\n"
+            f"Stop loss: *{cfg.stop_loss_pct * 100:.1f}%*\n"
+            f"Kelly: *{cfg.kelly_fraction:.2f}*\n"
+            f"Интервал: *{cfg.update_interval_ms}ms*",
+            parse_mode="Markdown",
+        )
+
+    async def _cmd_edge(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not self.btc_feed or not self.btc_feed.is_ready:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "⏳ BTC feed ещё не готов. Подождите ~10 сек."
+            )
+            return
+
+        from trading.signals import SignalEngine
+
+        signals = SignalEngine(self.btc_feed)
+        sig = signals.all_signals()
+
+        lines = [
+            f"📊 *BTC Сигналы:*\n"
+            f"💲 Price: *${sig['price']:,.2f}*\n"
+            f"📐 Microprice: ${sig['microprice']:,.2f}\n"
+            f"📊 Imbalance: {sig['imbalance']:+.3f}\n"
+            f"📈 Volatility: {sig['volatility']:.4f}\n"
+            f"🔄 Momentum: {sig['momentum']:.6f}\n"
+            f"📉 Drift: {sig['drift']:.4f}\n"
+        ]
+
+        if self.btc_strategy:
+            try:
+                markets = await self.btc_strategy.find_active_markets()
+                if markets:
+                    lines.append(f"\n*Рынки ({len(markets)}):*")
+                    for m in markets[:5]:
+                        from trading.probability import (
+                            compute_edge,
+                            final_probability,
+                        )
+
+                        t = m.time_left_frac
+                        mp = final_probability(
+                            sig["price"], m.strike,
+                            sig["volatility"], sig["drift"], t,
+                            sig["bid_volume"], sig["ask_volume"],
+                            sig["microprice"], sig["mid_price"],
+                            self.btc_feed.recent_returns(20),
+                        )
+                        edge = compute_edge(mp, m.yes_price)
+                        icon = "🟢" if abs(edge) >= 0.03 else "⚪"
+                        lines.append(
+                            f"{icon} ${m.strike:,.0f} "
+                            f"({m.time_left:.0f}s)\n"
+                            f"   Model: {mp * 100:.1f}% vs "
+                            f"Market: {m.yes_price * 100:.1f}% "
+                            f"edge={edge * 100:+.1f}%"
+                        )
+                else:
+                    lines.append("\n_Нет активных 5-мин BTC рынков_")
+            except Exception:
+                pass
+
+        await update.message.reply_text(  # type: ignore[union-attr]
+            "\n".join(lines), parse_mode="Markdown"
+        )
 
     # ── Scan ─────────────────────────────────────────────────────
 

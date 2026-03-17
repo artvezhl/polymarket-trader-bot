@@ -24,6 +24,22 @@ class TradingConfig:
 
 
 @dataclass
+class StrategyConfig:
+    mode: str = "btc_5min"
+    edge_threshold: float = 0.03
+    update_interval_ms: int = 500
+    volatility_window_sec: int = 60
+    momentum_window_ticks: int = 20
+    max_exposure_pct: float = 0.10
+    trade_size_pct: float = 0.03
+    kelly_fraction: float = 0.25
+    late_market_sec: int = 25
+    take_profit_pct: float = 0.05
+    stop_loss_pct: float = 0.03
+    btc_exchange: str = "binance"
+
+
+@dataclass
 class ReportingConfig:
     status_interval_min: int = 60
     positions_report_interval_hours: int = 4
@@ -48,6 +64,7 @@ class SecretsConfig:
 @dataclass
 class AppConfig:
     trading: TradingConfig = field(default_factory=TradingConfig)
+    strategy: StrategyConfig = field(default_factory=StrategyConfig)
     reporting: ReportingConfig = field(default_factory=ReportingConfig)
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     secrets: SecretsConfig = field(default_factory=SecretsConfig)
@@ -76,6 +93,12 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> App
         if k in ReportingConfig.__dataclass_fields__
     }
     reporting = ReportingConfig(**reporting_kwargs)
+    strategy_data = yaml_data.get("strategy", {})
+    strategy_kwargs = {
+        k: v for k, v in strategy_data.items()
+        if k in StrategyConfig.__dataclass_fields__
+    }
+    strategy = StrategyConfig(**strategy_kwargs)
     telegram = TelegramConfig(
         admin_ids=telegram_data.get("admin_ids", []),
         bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
@@ -91,6 +114,7 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> App
 
     return AppConfig(
         trading=trading,
+        strategy=strategy,
         reporting=reporting,
         telegram=telegram,
         secrets=secrets,
