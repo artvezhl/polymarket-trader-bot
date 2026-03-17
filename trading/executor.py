@@ -49,6 +49,60 @@ class TradeExecutor:
             self._client = ClobClient(**kwargs)
         return self._client
 
+    async def get_clob_trades(self) -> list[dict]:
+        try:
+            resp = await asyncio.to_thread(self.client.get_trades)
+            return resp if isinstance(resp, list) else []
+        except Exception as e:
+            logger.error("Failed to get CLOB trades: %s", e)
+            return []
+
+    async def sync_positions(self, db) -> dict:
+        """Sync DB trades with CLOB API. Returns summary."""
+        from database.models import TradeStatus
+
+        clob_trades = await self.get_clob_trades()
+        db_open = await db.get_open_trades()
+
+        resolved = 0
+        for db_trade in db_open:
+            if not db_trade.order_id:
+                continue
+            market_id = db_trade.market_id
+            try:
+                market_data = await asyncio.to_thread(
+                    self.client.get_market, market_id
+                )
+                if not market_data:
+                    continue
+                closed = market_data.get("closed", False)
+                if not closed:
+                    continue
+
+                winning = market_data.get("winning_outcome")
+                if winning is None:
+                    continue
+
+                won = db_trade.outcome.lower() == str(winning).lower()
+                pnl = (
+                    db_trade.potential_payout - db_trade.bet_usd
+                    if won
+                    else -db_trade.bet_usd
+                )
+                status = TradeStatus.WON if won else TradeStatus.LOST
+                await db.update_trade_status(
+                    db_trade.id, status, pnl  # type: ignore[arg-type]
+                )
+                resolved += 1
+            except Exception:
+                pass
+
+        return {
+            "clob_trades": len(clob_trades),
+            "db_open": len(db_open),
+            "resolved": resolved,
+        }
+
     async def get_polymarket_balance(self) -> float:
         try:
             params = BalanceAllowanceParams(
@@ -112,7 +166,7 @@ class TradeExecutor:
                 self.client.create_order, order_args, options
             )
             resp = await asyncio.to_thread(
-                self.client.post_order, signed_order, OrderType.FOK
+                self.client.post_order, signed_order, OrderType.GTC
             )
 
             if not resp or resp.get("status") == "error":
@@ -203,7 +257,7 @@ class TradeExecutor:
                 self.client.create_order, order_args, options
             )
             resp = await asyncio.to_thread(
-                self.client.post_order, signed_order, OrderType.FOK
+                self.client.post_order, signed_order, OrderType.GTC
             )
 
             if not resp or resp.get("status") == "error":

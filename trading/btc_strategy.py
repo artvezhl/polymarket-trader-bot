@@ -66,6 +66,8 @@ class BtcStrategy:
         self._notify_callback = None
         self._failed_markets: dict[str, float] = {}
         self._fail_cooldown = 60
+        self.auto_close_enabled = False
+        self.take_profit_pct = config.strategy.take_profit_pct
 
     def set_notify(self, callback) -> None:
         self._notify_callback = callback
@@ -252,10 +254,34 @@ class BtcStrategy:
             )
         return trade
 
+    async def _update_live_prices(
+        self, open_trades: list[Trade]
+    ) -> None:
+        for trade in open_trades:
+            if not trade.token_id:
+                continue
+            try:
+                price_data = await asyncio.to_thread(
+                    self.executor.client.get_last_trade_price,
+                    trade.token_id,
+                )
+                new_price = float(price_data.get("price", 0))
+                if new_price > 0:
+                    await self.db.update_trade_price(
+                        trade.id, new_price  # type: ignore[arg-type]
+                    )
+                    trade.current_price = new_price
+            except Exception:
+                pass
+
     async def _auto_take_profit(
         self, open_trades: list[Trade], sig: dict
     ) -> None:
-        cfg = self.config.strategy
+        await self._update_live_prices(open_trades)
+
+        if not self.auto_close_enabled:
+            return
+
         for trade in open_trades:
             if trade.current_price <= 0:
                 continue
@@ -269,10 +295,10 @@ class BtcStrategy:
             should_close = False
             reason = ""
 
-            if pnl_pct >= cfg.take_profit_pct:
+            if pnl_pct >= self.take_profit_pct:
                 should_close = True
                 reason = f"take profit ({pnl_pct * 100:.1f}%)"
-            elif pnl_pct <= -cfg.stop_loss_pct:
+            elif pnl_pct <= -self.config.strategy.stop_loss_pct:
                 should_close = True
                 reason = f"stop loss ({pnl_pct * 100:.1f}%)"
 
