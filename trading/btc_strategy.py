@@ -68,6 +68,7 @@ class BtcStrategy:
         self._fail_cooldown = 60
         self.auto_close_enabled = False
         self.take_profit_pct = config.strategy.take_profit_pct
+        self.stop_loss_pct = config.strategy.stop_loss_pct
 
     def set_notify(self, callback) -> None:
         self._notify_callback = callback
@@ -265,7 +266,13 @@ class BtcStrategy:
                     self.executor.client.get_last_trade_price,
                     trade.token_id,
                 )
-                new_price = float(price_data.get("price", 0))
+                raw = price_data
+                if hasattr(raw, "price"):
+                    new_price = float(raw.price)
+                elif isinstance(raw, dict):
+                    new_price = float(raw.get("price", 0))
+                else:
+                    continue
                 if new_price > 0:
                     await self.db.update_trade_price(
                         trade.id, new_price  # type: ignore[arg-type]
@@ -285,6 +292,8 @@ class BtcStrategy:
         for trade in open_trades:
             if trade.current_price <= 0:
                 continue
+            if trade.current_price >= 0.99 or trade.current_price <= 0.01:
+                continue
 
             pnl_pct = (
                 trade.unrealized_pnl / trade.bet_usd
@@ -298,7 +307,7 @@ class BtcStrategy:
             if pnl_pct >= self.take_profit_pct:
                 should_close = True
                 reason = f"take profit ({pnl_pct * 100:.1f}%)"
-            elif pnl_pct <= -self.config.strategy.stop_loss_pct:
+            elif pnl_pct <= -self.stop_loss_pct:
                 should_close = True
                 reason = f"stop loss ({pnl_pct * 100:.1f}%)"
 
