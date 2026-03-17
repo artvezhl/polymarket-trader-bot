@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from datetime import datetime
 
 from py_clob_client.client import ClobClient
@@ -109,13 +110,16 @@ class TradeExecutor:
         if price <= 0:
             return None
 
-        shares = bet_usd / price
+        raw_shares = bet_usd / price
+        shares = math.floor(raw_shares * 100) / 100
+        if shares <= 0:
+            return None
         potential_payout = shares
 
         try:
             order_args = OrderArgs(
                 price=price,
-                size=round(shares, 2),
+                size=shares,
                 side=BUY,
                 token_id=opportunity.token_id,
             )
@@ -197,7 +201,7 @@ class TradeExecutor:
                 return None
 
             best_bid = float(bids[0]["price"])
-            shares = round(trade.shares, 2)
+            shares = math.floor(trade.shares * 100) / 100
 
             order_args = OrderArgs(
                 price=best_bid,
