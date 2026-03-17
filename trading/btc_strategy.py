@@ -65,6 +65,7 @@ class BtcStrategy:
         self._running = False
         self._notify_callback = None
         self._failed_markets: dict[str, float] = {}
+        self._failed_closes: dict[int, float] = {}
         self._fail_cooldown = 60
         self.auto_close_enabled = False
         self.take_profit_pct = config.strategy.take_profit_pct
@@ -294,10 +295,13 @@ class BtcStrategy:
         if not self.auto_close_enabled:
             return
 
+        now = time.time()
         for trade in open_trades:
             if trade.current_price <= 0:
                 continue
             if trade.current_price >= 0.99 or trade.current_price <= 0.01:
+                continue
+            if now < self._failed_closes.get(trade.id or 0, 0):
                 continue
 
             pnl_pct = (
@@ -330,6 +334,10 @@ class BtcStrategy:
                         trade.question[:30],
                         reason,
                         result["pnl"],
+                    )
+                else:
+                    self._failed_closes[trade.id or 0] = (
+                        now + self._fail_cooldown
                     )
 
     def _estimate_strike(self, market_up_price: float) -> float:
