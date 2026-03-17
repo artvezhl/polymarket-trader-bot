@@ -24,8 +24,10 @@ from bot.notifications import (
     format_status_report,
 )
 from database.db import Database
+from database.models import TradeStatus
 from trading.executor import TradeExecutor
 from trading.portfolio import PortfolioManager
+from trading.redeemer import Redeemer
 from trading.scanner import MarketScanner
 from utils.config import AppConfig
 from utils.logger import logger
@@ -51,10 +53,13 @@ BOT_COMMANDS = [
     BotCommand("set_min_days", "Мин. дней до закрытия события"),
     BotCommand("set_skip_words", "Исключить по ключевым словам"),
     BotCommand("close", "Закрыть позицию"),
+    BotCommand("auto_close", "Вкл/выкл авто-закрытие по профиту"),
+    BotCommand("set_take_profit", "Установить % take profit"),
     BotCommand("strategy", "Статус BTC 5-min стратегии"),
     BotCommand("edge", "Текущие сигналы и edge"),
     BotCommand("scan", "Сканировать рынки (показать кол-во)"),
     BotCommand("sync", "Синхронизировать с CLOB API"),
+    BotCommand("redeem", "Зачислить выигрыши на счёт"),
     BotCommand("fees", "Статистика по комиссиям"),
     BotCommand("report", "Полный отчёт"),
     BotCommand("history", "Последние 20 сделок"),
@@ -77,6 +82,7 @@ class TelegramBot:
         self.scanner: MarketScanner | None = None
         self.btc_strategy = None
         self.btc_feed = None
+        self.redeemer: Redeemer | None = None
         self.is_trading = False
         self._scan_cache: dict[int, tuple[int, list]] = {}
         self._app: Application | None = None  # type: ignore[type-arg]
@@ -122,10 +128,13 @@ class TelegramBot:
             ("set_min_days", self._cmd_set_min_days),
             ("set_skip_words", self._cmd_set_skip_words),
             ("close", self._cmd_close),
+            ("auto_close", self._cmd_auto_close),
+            ("set_take_profit", self._cmd_set_take_profit),
             ("strategy", self._cmd_strategy),
             ("edge", self._cmd_edge),
             ("scan", self._cmd_scan),
             ("sync", self._cmd_sync),
+            ("redeem", self._cmd_redeem),
             ("fees", self._cmd_fees),
             ("report", self._cmd_report),
             ("history", self._cmd_history),
@@ -635,6 +644,59 @@ class TelegramBot:
                 "Возможно, нет ликвидности или проблема с API."
             )
 
+    # ── Auto-close ───────────────────────────────────────────────
+
+    async def _cmd_auto_close(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not self.btc_strategy:
+            await update.message.reply_text("❌ Стратегия не инициализирована")  # type: ignore[union-attr]
+            return
+
+        self.btc_strategy.auto_close_enabled = (
+            not self.btc_strategy.auto_close_enabled
+        )
+        state = self.btc_strategy.auto_close_enabled
+        tp = self.btc_strategy.take_profit_pct
+        icon = "🟢" if state else "🔴"
+        await update.message.reply_text(  # type: ignore[union-attr]
+            f"{icon} Авто-закрытие: *{'вкл' if state else 'выкл'}*\n"
+            f"Take profit: *{tp * 100:.1f}%*\n"
+            f"Stop loss: *{self.config.strategy.stop_loss_pct * 100:.1f}%*",
+            parse_mode="Markdown",
+        )
+
+    async def _cmd_set_take_profit(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not self.btc_strategy:
+            await update.message.reply_text("❌ Стратегия не инициализирована")  # type: ignore[union-attr]
+            return
+
+        cur = self.btc_strategy.take_profit_pct
+        if not context.args:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                f"Take profit: *{cur * 100:.1f}%*\n"
+                f"Изменить: /set\\_take\\_profit 10",
+                parse_mode="Markdown",
+            )
+            return
+        try:
+            value = float(context.args[0]) / 100
+            if value <= 0:
+                raise ValueError
+            self.btc_strategy.take_profit_pct = value
+            await update.message.reply_text(  # type: ignore[union-attr]
+                f"✅ Take profit: {cur * 100:.1f}% → "
+                f"*{value * 100:.1f}%*",
+                parse_mode="Markdown",
+            )
+        except ValueError:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "❌ Укажите % > 0, например: /set\\_take\\_profit 10",
+                parse_mode="Markdown",
+            )
+
     # ── BTC Strategy ──────────────────────────────────────────────
 
     async def _cmd_strategy(
@@ -823,60 +885,64 @@ class TelegramBot:
     ) -> None:
         if not self.executor:
             await update.message.reply_text(  # type: ignore[union-attr]
-                "❌ Executor не настроен. Проверьте API ключи."
+                "❌ Executor не настроен."
             )
             return
 
         await update.message.reply_text(  # type: ignore[union-attr]
-            "🔄 Синхронизирую с CLOB API..."
+            "🔄 Синхронизирую с Polymarket..."
         )
 
         try:
-            import asyncio as _aio
-
-            trades_resp = await _aio.to_thread(
-                self.executor.client.get_trades
-            )
-            orders_resp = await _aio.to_thread(
-                self.executor.client.get_orders
-            )
-
-            trades_data = trades_resp if isinstance(trades_resp, list) else []
-            orders_data = orders_resp if isinstance(orders_resp, list) else []
-
-            open_db_trades = await self.db.get_open_trades()
-            updated = 0
-            for db_trade in open_db_trades:
-                if not db_trade.order_id:
-                    continue
-                for api_trade in trades_data:
-                    if api_trade.get("order_id") == db_trade.order_id:
-                        fee = float(api_trade.get("fee_rate_bps", 0)) / 10000
-                        price = float(api_trade.get("price", 0))
-                        size = float(api_trade.get("size", 0))
-                        fee_usd = round(price * size * fee, 4)
-                        if price > 0:
-                            await self.db.update_trade_fill(
-                                db_trade.id,  # type: ignore[arg-type]
-                                db_trade.order_id,
-                                price,
-                                fee_usd,
-                            )
-                            updated += 1
-                        break
-
+            result = await self.executor.sync_positions(self.db)
+            open_now = await self.db.get_open_trades()
             await update.message.reply_text(  # type: ignore[union-attr]
                 f"✅ *Синхронизация завершена:*\n"
-                f"Сделок в CLOB: {len(trades_data)}\n"
-                f"Ордеров в CLOB: {len(orders_data)}\n"
-                f"Обновлено в БД: {updated}",
+                f"Сделок в CLOB: {result['clob_trades']}\n"
+                f"Открытых в БД: {len(open_now)}\n"
+                f"Закрыто/resolved: {result['resolved']}",
                 parse_mode="Markdown",
             )
         except Exception as e:
             logger.error("Sync failed: %s", e)
             await update.message.reply_text(  # type: ignore[union-attr]
-                f"❌ Ошибка синхронизации: {e}"
+                f"❌ Ошибка: {e}"
             )
+
+    async def _cmd_redeem(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not self.redeemer:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "❌ Redeemer не настроен (нет proxy\\_address или RPC)",
+                parse_mode="Markdown",
+            )
+            return
+
+        won_trades = await self.db.get_recent_trades(100)
+        won_trades = [
+            t for t in won_trades if t.status == TradeStatus.WON
+        ]
+
+        if not won_trades:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "📭 Нет выигрышных позиций для зачисления"
+            )
+            return
+
+        await update.message.reply_text(  # type: ignore[union-attr]
+            f"💰 Зачисляю {len(won_trades)} выигрышей..."
+        )
+
+        redeemed = 0
+        for trade in won_trades:
+            tx = await self.redeemer.redeem(trade.market_id)
+            if tx:
+                redeemed += 1
+
+        await self.send_message(
+            f"✅ Зачислено: {redeemed}/{len(won_trades)} позиций"
+        )
 
     async def _cmd_fees(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE

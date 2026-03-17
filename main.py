@@ -19,6 +19,7 @@ from trading.btc_feed import BtcFeed
 from trading.btc_strategy import BtcStrategy
 from trading.executor import TradeExecutor
 from trading.portfolio import PortfolioManager
+from trading.redeemer import Redeemer
 from trading.scanner import MarketScanner
 from utils.config import AppConfig, apply_db_overrides, load_config
 from utils.logger import logger
@@ -35,12 +36,17 @@ class TradingEngine:
         self.btc_strategy = BtcStrategy(
             config, self.db, self.executor, self.btc_feed
         )
+        self.redeemer: Redeemer | None = None
+        if config.secrets.proxy_address:
+            self.redeemer = Redeemer(config.secrets)
+
         self.tg_bot = TelegramBot(
             config, self.db, self.portfolio, self.executor
         )
         self.tg_bot.scanner = self.scanner
         self.tg_bot.btc_strategy = self.btc_strategy
         self.tg_bot.btc_feed = self.btc_feed
+        self.tg_bot.redeemer = self.redeemer
         self._shutdown = asyncio.Event()
 
     async def start(self) -> None:
