@@ -110,10 +110,10 @@ class TradeExecutor:
         if price <= 0:
             return None
 
-        raw_shares = bet_usd / price
-        shares = math.floor(raw_shares * 100) / 100
-        if shares <= 0:
+        shares = math.floor(bet_usd / price)
+        if shares < 1:
             return None
+        bet_usd = round(shares * price, 2)
         potential_payout = shares
 
         try:
@@ -201,7 +201,7 @@ class TradeExecutor:
                 return None
 
             best_bid = float(bids[0]["price"])
-            shares = math.floor(trade.shares * 100) / 100
+            shares = math.floor(trade.shares)
 
             order_args = OrderArgs(
                 price=best_bid,
