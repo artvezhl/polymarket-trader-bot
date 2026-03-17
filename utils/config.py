@@ -58,7 +58,8 @@ class SecretsConfig:
     polymarket_api_secret: str = ""
     polymarket_api_passphrase: str = ""
     polygon_rpc_url: str = "https://polygon-rpc.com"
-    signature_type: int = 0
+    signature_type: int = 2
+    proxy_address: str = ""
 
 
 @dataclass
@@ -109,7 +110,8 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> App
         polymarket_api_secret=os.getenv("POLYMARKET_API_SECRET", ""),
         polymarket_api_passphrase=os.getenv("POLYMARKET_API_PASSPHRASE", ""),
         polygon_rpc_url=os.getenv("POLYGON_RPC_URL", "https://polygon-rpc.com"),
-        signature_type=int(os.getenv("POLYMARKET_SIG_TYPE", "0")),
+        signature_type=int(os.getenv("POLYMARKET_SIG_TYPE", "2")),
+        proxy_address=os.getenv("POLYMARKET_PROXY_ADDRESS", ""),
     )
 
     return AppConfig(

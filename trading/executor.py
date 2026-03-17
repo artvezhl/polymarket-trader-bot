@@ -44,44 +44,23 @@ class TradeExecutor:
                 "creds": creds,
                 "signature_type": sig_type,
             }
-            if sig_type in (1, 2):
-                from eth_account import Account
-
-                kwargs["funder"] = Account.from_key(
-                    self.config.secrets.private_key
-                ).address
+            if sig_type in (1, 2) and self.config.secrets.proxy_address:
+                kwargs["funder"] = self.config.secrets.proxy_address
             self._client = ClobClient(**kwargs)
         return self._client
 
     async def get_polymarket_balance(self) -> float:
-        """Fetch USDC balance, trying sig_type 2 then 0."""
-        for sig in [2, 0]:
-            try:
-                creds = ApiCreds(
-                    api_key=self.config.secrets.polymarket_api_key,
-                    api_secret=self.config.secrets.polymarket_api_secret,
-                    api_passphrase=self.config.secrets.polymarket_api_passphrase,
-                )
-                c = ClobClient(
-                    host="https://clob.polymarket.com",
-                    key=self.config.secrets.private_key,
-                    chain_id=137,
-                    creds=creds,
-                    signature_type=sig,
-                )
-                params = BalanceAllowanceParams(
-                    asset_type=AssetType.COLLATERAL
-                )
-                resp = await asyncio.to_thread(
-                    c.get_balance_allowance, params
-                )
-                balance = float(resp.get("balance", 0)) / 1e6
-                if balance > 0:
-                    return balance
-            except Exception:
-                continue
-        logger.warning("Polymarket balance returned 0 for all sig types")
-        return 0.0
+        try:
+            params = BalanceAllowanceParams(
+                asset_type=AssetType.COLLATERAL
+            )
+            resp = await asyncio.to_thread(
+                self.client.get_balance_allowance, params
+            )
+            return float(resp.get("balance", 0)) / 1e6
+        except Exception as e:
+            logger.error("Failed to get Polymarket balance: %s", e)
+            return 0.0
 
     @staticmethod
     def _round_to_tick(price: float, tick_size: str) -> float:
