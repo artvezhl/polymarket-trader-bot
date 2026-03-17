@@ -68,6 +68,7 @@ class BtcStrategy:
         self._fail_cooldown = 60
         self.auto_close_enabled = False
         self.take_profit_pct = config.strategy.take_profit_pct
+        self.stop_loss_pct = config.strategy.stop_loss_pct
 
     def set_notify(self, callback) -> None:
         self._notify_callback = callback
@@ -298,7 +299,7 @@ class BtcStrategy:
             if pnl_pct >= self.take_profit_pct:
                 should_close = True
                 reason = f"take profit ({pnl_pct * 100:.1f}%)"
-            elif pnl_pct <= -self.config.strategy.stop_loss_pct:
+            elif pnl_pct <= -self.stop_loss_pct:
                 should_close = True
                 reason = f"stop loss ({pnl_pct * 100:.1f}%)"
 

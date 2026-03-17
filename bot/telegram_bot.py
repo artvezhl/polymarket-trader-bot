@@ -55,6 +55,7 @@ BOT_COMMANDS = [
     BotCommand("close", "Закрыть позицию"),
     BotCommand("auto_close", "Вкл/выкл авто-закрытие по профиту"),
     BotCommand("set_take_profit", "Установить % take profit"),
+    BotCommand("set_stop_loss", "Установить % stop loss"),
     BotCommand("strategy", "Статус BTC 5-min стратегии"),
     BotCommand("edge", "Текущие сигналы и edge"),
     BotCommand("scan", "Сканировать рынки (показать кол-во)"),
@@ -130,6 +131,7 @@ class TelegramBot:
             ("close", self._cmd_close),
             ("auto_close", self._cmd_auto_close),
             ("set_take_profit", self._cmd_set_take_profit),
+            ("set_stop_loss", self._cmd_set_stop_loss),
             ("strategy", self._cmd_strategy),
             ("edge", self._cmd_edge),
             ("scan", self._cmd_scan),
@@ -657,12 +659,12 @@ class TelegramBot:
             not self.btc_strategy.auto_close_enabled
         )
         state = self.btc_strategy.auto_close_enabled
-        tp = self.btc_strategy.take_profit_pct
         icon = "🟢" if state else "🔴"
         await update.message.reply_text(  # type: ignore[union-attr]
             f"{icon} Авто-закрытие: *{'вкл' if state else 'выкл'}*\n"
-            f"Take profit: *{tp * 100:.1f}%*\n"
-            f"Stop loss: *{self.config.strategy.stop_loss_pct * 100:.1f}%*",
+            f"Take profit: *{self.btc_strategy.take_profit_pct * 100:.1f}%*\n"
+            f"Stop loss: *{self.btc_strategy.stop_loss_pct * 100:.1f}%*\n\n"
+            f"Изменить: /set\\_take\\_profit, /set\\_stop\\_loss",
             parse_mode="Markdown",
         )
 
@@ -694,6 +696,37 @@ class TelegramBot:
         except ValueError:
             await update.message.reply_text(  # type: ignore[union-attr]
                 "❌ Укажите % > 0, например: /set\\_take\\_profit 10",
+                parse_mode="Markdown",
+            )
+
+    async def _cmd_set_stop_loss(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not self.btc_strategy:
+            await update.message.reply_text("❌ Стратегия не инициализирована")  # type: ignore[union-attr]
+            return
+
+        cur = self.btc_strategy.stop_loss_pct
+        if not context.args:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                f"Stop loss: *{cur * 100:.1f}%*\n"
+                f"Изменить: /set\\_stop\\_loss 5",
+                parse_mode="Markdown",
+            )
+            return
+        try:
+            value = float(context.args[0]) / 100
+            if value <= 0:
+                raise ValueError
+            self.btc_strategy.stop_loss_pct = value
+            await update.message.reply_text(  # type: ignore[union-attr]
+                f"✅ Stop loss: {cur * 100:.1f}% → "
+                f"*{value * 100:.1f}%*",
+                parse_mode="Markdown",
+            )
+        except ValueError:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "❌ Укажите % > 0, например: /set\\_stop\\_loss 5",
                 parse_mode="Markdown",
             )
 
