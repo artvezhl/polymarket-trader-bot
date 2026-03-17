@@ -23,7 +23,7 @@ def distance_adjustment(
     strike: float,
     sigma: float,
     t: float,
-    weight: float = 0.15,
+    weight: float = 0.05,
 ) -> float:
     if price <= 0 or sigma <= 0 or t <= 0:
         return 0.0
@@ -35,7 +35,7 @@ def distance_adjustment(
 
 
 def imbalance_adjustment(
-    bid_vol: float, ask_vol: float, weight: float = 0.05
+    bid_vol: float, ask_vol: float, weight: float = 0.02
 ) -> float:
     total = bid_vol + ask_vol
     if total == 0:
@@ -45,7 +45,7 @@ def imbalance_adjustment(
 
 
 def microprice_adjustment(
-    microprice: float, midprice: float, weight: float = 10.0
+    microprice: float, midprice: float, weight: float = 2.0
 ) -> float:
     if midprice == 0:
         return 0.0
@@ -53,7 +53,7 @@ def microprice_adjustment(
 
 
 def momentum_adjustment(
-    returns: list[float], weight: float = 5.0
+    returns: list[float], weight: float = 2.0
 ) -> float:
     if not returns:
         return 0.0
