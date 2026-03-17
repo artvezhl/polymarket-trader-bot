@@ -705,21 +705,26 @@ class TelegramBot:
                         )
 
                         t = m.time_left_frac
-                        mp = final_probability(
+                        p_up = final_probability(
                             sig["price"], m.strike,
                             sig["volatility"], sig["drift"], t,
                             sig["bid_volume"], sig["ask_volume"],
                             sig["microprice"], sig["mid_price"],
                             self.btc_feed.recent_returns(20),
                         )
-                        edge = compute_edge(mp, m.yes_price)
-                        icon = "🟢" if abs(edge) >= 0.03 else "⚪"
+                        edge_up = compute_edge(p_up, m.up_price)
+                        edge_dn = compute_edge(1 - p_up, m.down_price)
+                        best = max(edge_up, edge_dn)
+                        icon = "🟢" if best >= 0.03 else "⚪"
                         lines.append(
-                            f"{icon} ${m.strike:,.0f} "
+                            f"{icon} {m.question[:35]} "
                             f"({m.time_left:.0f}s)\n"
-                            f"   Model: {mp * 100:.1f}% vs "
-                            f"Market: {m.yes_price * 100:.1f}% "
-                            f"edge={edge * 100:+.1f}%"
+                            f"   Up: {p_up * 100:.0f}% vs "
+                            f"{m.up_price * 100:.0f}% "
+                            f"(edge {edge_up * 100:+.1f}%)\n"
+                            f"   Dn: {(1 - p_up) * 100:.0f}% vs "
+                            f"{m.down_price * 100:.0f}% "
+                            f"(edge {edge_dn * 100:+.1f}%)"
                         )
                 else:
                     lines.append("\n_Нет активных 5-мин BTC рынков_")
