@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import re
 import time
 from dataclasses import dataclass
+from datetime import datetime
 
 import aiohttp
 
@@ -22,7 +22,7 @@ from utils.config import AppConfig
 from utils.logger import logger
 
 GAMMA_API = "https://gamma-api.polymarket.com"
-STRIKE_RE = re.compile(r"\$?([\d,]+(?:\.\d+)?)")
+MARKET_INTERVAL = 300
 
 
 @dataclass
@@ -31,10 +31,10 @@ class BtcMarket:
     question: str
     strike: float
     end_timestamp: float
-    yes_token_id: str
-    no_token_id: str
-    yes_price: float
-    no_price: float
+    up_token_id: str
+    down_token_id: str
+    up_price: float
+    down_price: float
     tick_size: str
     neg_risk: bool
 
@@ -47,20 +47,8 @@ class BtcMarket:
         return self.time_left / 300.0
 
 
-def _parse_strike(question: str) -> float | None:
-    matches = STRIKE_RE.findall(question)
-    for m in matches:
-        try:
-            val = float(m.replace(",", ""))
-            if 1000 < val < 1_000_000:
-                return val
-        except ValueError:
-            continue
-    return None
-
-
 class BtcStrategy:
-    """5-minute BTC market trading strategy."""
+    """5-minute BTC Up/Down market trading strategy."""
 
     def __init__(
         self,
@@ -90,7 +78,9 @@ class BtcStrategy:
     async def run(self) -> None:
         self._running = True
         interval = self.config.strategy.update_interval_ms / 1000.0
-        logger.info("BTC strategy started (%.0fms interval)", interval * 1000)
+        logger.info(
+            "BTC strategy started (%.0fms interval)", interval * 1000
+        )
 
         while self._running:
             try:
@@ -117,10 +107,12 @@ class BtcStrategy:
         open_trades = await self.db.get_open_trades()
         open_market_ids = {t.market_id for t in open_trades}
         total_exposure = sum(t.bet_usd for t in open_trades)
-        max_exposure = balance * cfg.max_exposure_pct if balance > 0 else 0
+        max_exposure = (
+            balance * cfg.max_exposure_pct if balance > 0 else 0
+        )
 
         for market in markets:
-            if market.time_left < 5:
+            if market.time_left < 10 or market.time_left > 300:
                 continue
             if market.condition_id in open_market_ids:
                 continue
@@ -152,10 +144,13 @@ class BtcStrategy:
         late_p = late_market_probability(
             sig["price"], market.strike, sigma, t
         )
-        if late_p is not None and market.time_left < cfg.late_market_sec:
-            model_prob = late_p
+        if (
+            late_p is not None
+            and market.time_left < cfg.late_market_sec
+        ):
+            p_up = late_p
         else:
-            model_prob = final_probability(
+            p_up = final_probability(
                 price=sig["price"],
                 strike=market.strike,
                 sigma=sigma,
@@ -168,26 +163,26 @@ class BtcStrategy:
                 returns=returns,
             )
 
-        edge_yes = compute_edge(model_prob, market.yes_price)
-        edge_no = compute_edge(1 - model_prob, market.no_price)
+        edge_up = compute_edge(p_up, market.up_price)
+        edge_down = compute_edge(1 - p_up, market.down_price)
 
-        if abs(edge_yes) >= abs(edge_no) and edge_yes > 0:
+        if edge_up > 0 and edge_up >= edge_down:
             return {
-                "side": "YES",
-                "edge": edge_yes,
-                "model_prob": model_prob,
-                "market_prob": market.yes_price,
-                "token_id": market.yes_token_id,
-                "price": market.yes_price,
+                "side": "Up",
+                "edge": edge_up,
+                "model_prob": p_up,
+                "market_prob": market.up_price,
+                "token_id": market.up_token_id,
+                "price": market.up_price,
             }
-        elif edge_no > 0:
+        elif edge_down > 0:
             return {
-                "side": "NO",
-                "edge": edge_no,
-                "model_prob": 1 - model_prob,
-                "market_prob": market.no_price,
-                "token_id": market.no_token_id,
-                "price": market.no_price,
+                "side": "Down",
+                "edge": edge_down,
+                "model_prob": 1 - p_up,
+                "market_prob": market.down_price,
+                "token_id": market.down_token_id,
+                "price": market.down_price,
             }
         return None
 
@@ -195,7 +190,8 @@ class BtcStrategy:
         self, market: BtcMarket, result: dict, balance: float, cfg
     ) -> Trade | None:
         edge = result["edge"]
-        odds = 1.0 / result["price"] - 1.0 if result["price"] > 0 else 0
+        price = result["price"]
+        odds = 1.0 / price - 1.0 if price > 0 else 0
         k = kelly_size(edge, odds, cfg.kelly_fraction)
         bet_usd = round(balance * k, 2)
         bet_usd = min(bet_usd, balance * cfg.trade_size_pct)
@@ -204,10 +200,10 @@ class BtcStrategy:
         if bet_usd > balance * cfg.max_exposure_pct:
             return None
 
-        price = self.executor._round_to_tick(
-            result["price"], market.tick_size
+        rounded_price = self.executor._round_to_tick(
+            price, market.tick_size
         )
-        if price <= 0 or price >= 1:
+        if rounded_price <= 0 or rounded_price >= 1:
             return None
 
         from trading.scanner import MarketOpportunity
@@ -215,7 +211,7 @@ class BtcStrategy:
         opp = MarketOpportunity(
             market_id=market.condition_id,
             question=market.question,
-            probability=price,
+            probability=rounded_price,
             outcome=result["side"],
             token_id=result["token_id"],
             liquidity=0,
@@ -230,7 +226,7 @@ class BtcStrategy:
             msg = (
                 f"⚡ *BTC 5min trade:*\n"
                 f"Рынок: _{market.question[:50]}_\n"
-                f"Сторона: {result['side']} @ ${price:.2f}\n"
+                f"Сторона: *{result['side']}* @ ${rounded_price:.2f}\n"
                 f"Edge: {edge * 100:.1f}% | "
                 f"Model: {result['model_prob'] * 100:.1f}% vs "
                 f"Market: {result['market_prob'] * 100:.1f}%\n"
@@ -255,7 +251,11 @@ class BtcStrategy:
             if trade.current_price <= 0:
                 continue
 
-            pnl_pct = trade.unrealized_pnl / trade.bet_usd if trade.bet_usd > 0 else 0
+            pnl_pct = (
+                trade.unrealized_pnl / trade.bet_usd
+                if trade.bet_usd > 0
+                else 0
+            )
 
             should_close = False
             reason = ""
@@ -284,89 +284,118 @@ class BtcStrategy:
                     )
 
     async def find_active_markets(self) -> list[BtcMarket]:
-        markets: list[BtcMarket] = []
+        results: list[BtcMarket] = []
+        now = int(time.time())
+        base_ts = (now // MARKET_INTERVAL) * MARKET_INTERVAL
+        timeout = aiohttp.ClientTimeout(total=10)
+
+        from trading.scanner import _parse_float, _parse_list_field
+
         try:
             async with aiohttp.ClientSession() as session:
-                params = {
-                    "active": "true",
-                    "closed": "false",
-                    "limit": "50",
-                }
-                timeout = aiohttp.ClientTimeout(total=10)
-                async with session.get(
-                    f"{GAMMA_API}/markets",
-                    params=params,
-                    timeout=timeout,
-                ) as resp:
-                    if resp.status != 200:
-                        return []
-                    data = await resp.json()
 
-            from trading.scanner import _parse_float, _parse_list_field
+                async def _fetch_event(ts: int) -> None:
+                    slug = f"btc-updown-5m-{ts}"
+                    try:
+                        async with session.get(
+                            f"{GAMMA_API}/events",
+                            params={"slug": slug},
+                            timeout=timeout,
+                        ) as resp:
+                            if resp.status != 200:
+                                return
+                            data = await resp.json()
+                            if not data:
+                                return
 
-            for m in data:
-                q = m.get("question", "")
-                q_lower = q.lower()
-                if "btc" not in q_lower and "bitcoin" not in q_lower:
-                    continue
+                        ev = (
+                            data[0]
+                            if isinstance(data, list)
+                            else data
+                        )
+                        for m in ev.get("markets", []):
+                            if m.get("closed"):
+                                continue
 
-                end_str = m.get("endDate") or ""
-                if not end_str:
-                    continue
-                from datetime import datetime
+                            end_str = m.get("endDate", "")
+                            if not end_str:
+                                continue
 
-                try:
-                    end_dt = datetime.fromisoformat(
-                        end_str.replace("Z", "+00:00")
-                    )
-                    end_ts = end_dt.timestamp()
-                except (ValueError, TypeError):
-                    continue
+                            end_dt = datetime.fromisoformat(
+                                end_str.replace("Z", "+00:00")
+                            )
+                            end_ts = end_dt.timestamp()
+                            left = end_ts - time.time()
+                            if left < 10 or left > 600:
+                                continue
 
-                time_left = end_ts - time.time()
-                if time_left < 5 or time_left > 600:
-                    continue
+                            outcomes = _parse_list_field(
+                                m.get("outcomes")
+                            )
+                            prices = _parse_list_field(
+                                m.get("outcomePrices")
+                            )
+                            tokens = _parse_list_field(
+                                m.get("clobTokenIds")
+                            )
+                            if (
+                                len(outcomes) < 2
+                                or len(prices) < 2
+                                or len(tokens) < 2
+                            ):
+                                continue
 
-                strike = _parse_strike(q)
-                if strike is None:
-                    continue
+                            up_idx, down_idx = 0, 1
+                            for i, o in enumerate(outcomes):
+                                if o.lower() == "up":
+                                    up_idx = i
+                                elif o.lower() == "down":
+                                    down_idx = i
 
-                outcomes = _parse_list_field(m.get("outcomes"))
-                prices = _parse_list_field(m.get("outcomePrices"))
-                tokens = _parse_list_field(m.get("clobTokenIds"))
+                            strike = (
+                                self.feed.price
+                                if self.feed.price > 0
+                                else 0
+                            )
+                            tick = (
+                                m.get("orderPriceMinTickSize") or "0.01"
+                            )
 
-                if len(outcomes) < 2 or len(prices) < 2 or len(tokens) < 2:
-                    continue
+                            results.append(
+                                BtcMarket(
+                                    condition_id=(
+                                        m.get("conditionId")
+                                        or m.get("id", "")
+                                    ),
+                                    question=m.get("question", ""),
+                                    strike=strike,
+                                    end_timestamp=end_ts,
+                                    up_token_id=tokens[up_idx],
+                                    down_token_id=tokens[down_idx],
+                                    up_price=_parse_float(
+                                        prices[up_idx]
+                                    ),
+                                    down_price=_parse_float(
+                                        prices[down_idx]
+                                    ),
+                                    tick_size=str(tick),
+                                    neg_risk=bool(
+                                        m.get("negRisk", False)
+                                    ),
+                                )
+                            )
+                    except Exception:
+                        pass
 
-                yes_idx = 0
-                no_idx = 1
-                for i, o in enumerate(outcomes):
-                    if o.lower() == "yes":
-                        yes_idx = i
-                    elif o.lower() == "no":
-                        no_idx = i
-
-                tick = m.get("orderPriceMinTickSize") or "0.01"
-
-                markets.append(
-                    BtcMarket(
-                        condition_id=(
-                            m.get("conditionId") or m.get("id", "")
-                        ),
-                        question=q,
-                        strike=strike,
-                        end_timestamp=end_ts,
-                        yes_token_id=tokens[yes_idx],
-                        no_token_id=tokens[no_idx],
-                        yes_price=_parse_float(prices[yes_idx]),
-                        no_price=_parse_float(prices[no_idx]),
-                        tick_size=str(tick),
-                        neg_risk=bool(m.get("negRisk", False)),
-                    )
+                await asyncio.gather(
+                    *[
+                        _fetch_event(base_ts + i * MARKET_INTERVAL)
+                        for i in range(-1, 12)
+                    ]
                 )
 
         except Exception as e:
             logger.error("Failed to find BTC markets: %s", e)
 
-        markets.sort(key=lambda m: m.time_left)
-        return markets
+        results.sort(key=lambda m: m.time_left)
+        return results
