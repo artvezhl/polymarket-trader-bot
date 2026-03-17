@@ -68,6 +68,7 @@ class TradingEngine:
         await self.tg_bot.register_commands()
         logger.info("Telegram bot started")
 
+        await self.btc_strategy.load_settings()
         self.btc_strategy.set_notify(self.tg_bot.send_message)
 
         tasks = [
