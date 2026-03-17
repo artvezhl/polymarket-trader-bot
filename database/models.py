@@ -32,6 +32,10 @@ class Trade:
     order_id: str = ""
     fill_price: float = 0.0
     fee_usd: float = 0.0
+    redeemed: bool = False
+    redeem_tx_hash: str = ""
+    redeem_attempts: int = 0
+    last_redeem_at: datetime | None = None
 
     @property
     def shares(self) -> float:
@@ -71,6 +75,12 @@ class Trade:
             order_id=row[14] if len(row) > 14 else "",
             fill_price=row[15] if len(row) > 15 else 0.0,
             fee_usd=row[16] if len(row) > 16 else 0.0,
+            redeemed=bool(row[17]) if len(row) > 17 else False,
+            redeem_tx_hash=row[18] if len(row) > 18 else "",
+            redeem_attempts=int(row[19]) if len(row) > 19 and row[19] is not None else 0,
+            last_redeem_at=(
+                datetime.fromisoformat(row[20]) if len(row) > 20 and row[20] else None
+            ),
         )
 
 

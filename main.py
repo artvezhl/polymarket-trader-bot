@@ -79,6 +79,7 @@ class TradingEngine:
             asyncio.create_task(self._status_reporter_loop(), name="status_reporter"),
             asyncio.create_task(self._price_monitor_loop(), name="price_monitor"),
             asyncio.create_task(self._positions_report_loop(), name="positions_report"),
+            asyncio.create_task(self._sync_and_redeem_loop(), name="sync_redeem"),
         ]
 
         await self.tg_bot.send_message(
@@ -251,6 +252,64 @@ class TradingEngine:
                     await self.tg_bot.send_message(msg)
             except Exception as e:
                 logger.error("Positions report error: %s", e)
+
+    async def _sync_and_redeem_loop(self) -> None:
+        interval = self.config.trading.sync_interval_sec
+        while not self._shutdown.is_set():
+            try:
+                await asyncio.wait_for(
+                    self._shutdown.wait(),
+                    timeout=interval,
+                )
+                return
+            except asyncio.TimeoutError:
+                pass
+
+            try:
+                result = await self.executor.sync_positions(self.db)
+                logger.info(
+                    "Sync loop: clob_trades=%d db_open=%d resolved=%d",
+                    result.get("clob_trades", 0),
+                    result.get("db_open", 0),
+                    result.get("resolved", 0),
+                )
+            except Exception as e:
+                logger.error("Sync loop error: %s", e)
+                continue
+
+            if not self.redeemer:
+                continue
+
+            try:
+                won_trades = await self.db.get_unredeemed_won_trades(100)
+                if not won_trades:
+                    continue
+
+                redeemed_count = 0
+                for trade in won_trades:
+                    neg_risk = (
+                        await asyncio.to_thread(
+                            self.executor.client.get_neg_risk,
+                            trade.token_id,
+                        )
+                        if trade.token_id
+                        else False
+                    )
+                    tx_hash = await self.redeemer.redeem(
+                        trade.market_id, neg_risk=neg_risk
+                    )
+                    await self.db.mark_redeem_result(
+                        trade.id, tx_hash or "", bool(tx_hash)  # type: ignore[arg-type]
+                    )
+                    if tx_hash:
+                        redeemed_count += 1
+
+                if redeemed_count or won_trades:
+                    await self.tg_bot.send_message(
+                        f"💰 Авто-redeem: зачислено {redeemed_count}/{len(won_trades)} выигрышных позиций."
+                    )
+            except Exception as e:
+                logger.error("Redeem loop error: %s", e)
 
 
 def main() -> None:

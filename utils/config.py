@@ -21,6 +21,7 @@ class TradingConfig:
     min_end_date_days: int = 1
     price_check_interval_sec: int = 120
     price_spike_multiplier: float = 10.0
+    sync_interval_sec: int = 300
 
 
 @dataclass
@@ -134,6 +135,7 @@ TRADING_CONFIG_KEYS = {
     "min_end_date_days": int,
     "price_check_interval_sec": int,
     "price_spike_multiplier": float,
+    "sync_interval_sec": int,
 }
 
 TRADING_LIST_KEYS = {"skip_keywords"}

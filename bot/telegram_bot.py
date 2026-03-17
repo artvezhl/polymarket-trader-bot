@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 from functools import wraps
 from typing import Any, Callable, Coroutine
@@ -1046,10 +1047,7 @@ class TelegramBot:
             )
             return
 
-        won_trades = await self.db.get_recent_trades(100)
-        won_trades = [
-            t for t in won_trades if t.status == TradeStatus.WON
-        ]
+        won_trades = await self.db.get_unredeemed_won_trades(100)
 
         if not won_trades:
             await update.message.reply_text(  # type: ignore[union-attr]
@@ -1063,7 +1061,17 @@ class TelegramBot:
 
         redeemed = 0
         for trade in won_trades:
-            tx = await self.redeemer.redeem(trade.market_id)
+            neg_risk = False
+            if trade.token_id and self.executor:
+                neg_risk = await asyncio.to_thread(
+                    self.executor.client.get_neg_risk, trade.token_id
+                )
+            tx = await self.redeemer.redeem(
+                trade.market_id, neg_risk=neg_risk
+            )
+            await self.db.mark_redeem_result(
+                trade.id, tx or "", bool(tx)  # type: ignore[arg-type]
+            )
             if tx:
                 redeemed += 1
 

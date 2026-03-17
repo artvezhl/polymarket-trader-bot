@@ -30,7 +30,11 @@ CREATE TABLE IF NOT EXISTS trades (
     price_alert_sent INTEGER DEFAULT 0,
     order_id TEXT DEFAULT '',
     fill_price REAL DEFAULT 0,
-    fee_usd REAL DEFAULT 0
+    fee_usd REAL DEFAULT 0,
+    redeemed INTEGER DEFAULT 0,
+    redeem_tx_hash TEXT DEFAULT '',
+    redeem_attempts INTEGER DEFAULT 0,
+    last_redeem_at TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS balance_log (
@@ -48,6 +52,10 @@ MIGRATIONS = [
     "ALTER TABLE trades ADD COLUMN order_id TEXT DEFAULT ''",
     "ALTER TABLE trades ADD COLUMN fill_price REAL DEFAULT 0",
     "ALTER TABLE trades ADD COLUMN fee_usd REAL DEFAULT 0",
+    "ALTER TABLE trades ADD COLUMN redeemed INTEGER DEFAULT 0",
+    "ALTER TABLE trades ADD COLUMN redeem_tx_hash TEXT DEFAULT ''",
+    "ALTER TABLE trades ADD COLUMN redeem_attempts INTEGER DEFAULT 0",
+    "ALTER TABLE trades ADD COLUMN last_redeem_at TIMESTAMP",
 ]
 
 
@@ -83,8 +91,9 @@ class Database:
                (market_id, question, probability, bet_usd, potential_payout,
                 outcome, status, created_at, resolved_at, pnl, token_id,
                 current_price, price_alert_sent,
-                order_id, fill_price, fee_usd)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                order_id, fill_price, fee_usd,
+                redeemed, redeem_tx_hash, redeem_attempts, last_redeem_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 trade.market_id,
                 trade.question,
@@ -102,6 +111,10 @@ class Database:
                 trade.order_id,
                 trade.fill_price,
                 trade.fee_usd,
+                int(trade.redeemed),
+                trade.redeem_tx_hash,
+                trade.redeem_attempts,
+                trade.last_redeem_at.isoformat() if trade.last_redeem_at else None,
             ),
         )
         await self.conn.commit()
@@ -254,3 +267,32 @@ class Database:
         cursor = await self.conn.execute("SELECT key, value FROM config")
         rows = await cursor.fetchall()
         return {row[0]: row[1] for row in rows}
+
+    async def get_unredeemed_won_trades(self, limit: int = 100) -> list[Trade]:
+        cursor = await self.conn.execute(
+            """SELECT * FROM trades
+               WHERE status = ? AND COALESCE(redeemed, 0) = 0
+               ORDER BY resolved_at DESC LIMIT ?""",
+            (TradeStatus.WON.value, limit),
+        )
+        rows = await cursor.fetchall()
+        return [Trade.from_row(row) for row in rows]
+
+    async def mark_redeem_result(
+        self, trade_id: int, tx_hash: str, success: bool
+    ) -> None:
+        now = datetime.now().isoformat()
+        redeemed_val = 1 if success else 0
+        await self.conn.execute(
+            """
+            UPDATE trades
+            SET
+                redeemed = CASE WHEN ?1 = 1 THEN 1 ELSE COALESCE(redeemed, 0) END,
+                redeem_tx_hash = CASE WHEN ?1 = 1 THEN ?2 ELSE redeem_tx_hash END,
+                redeem_attempts = COALESCE(redeem_attempts, 0) + 1,
+                last_redeem_at = ?
+            WHERE id = ?
+            """,
+            (redeemed_val, tx_hash, now, trade_id),
+        )
+        await self.conn.commit()
