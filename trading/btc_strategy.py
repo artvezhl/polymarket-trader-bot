@@ -73,6 +73,7 @@ class BtcStrategy:
         self.hedge_enabled = False
         self.hedge_trigger_pct = 0.05
         self.hedge_ratio = 0.5
+        self.reverse_signal = False
         self._hedged_trades: set[int] = set()
 
     def set_notify(self, callback) -> None:
@@ -180,6 +181,9 @@ class BtcStrategy:
                 midprice=sig["mid_price"],
                 returns=returns,
             )
+
+        if self.reverse_signal:
+            p_up = 1.0 - p_up
 
         edge_up = compute_edge(p_up, market.up_price)
         edge_down = compute_edge(1 - p_up, market.down_price)

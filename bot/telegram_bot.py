@@ -56,6 +56,7 @@ BOT_COMMANDS = [
     BotCommand("auto_close", "Вкл/выкл авто-закрытие по профиту"),
     BotCommand("set_take_profit", "Установить % take profit"),
     BotCommand("set_stop_loss", "Установить % stop loss"),
+    BotCommand("reverse", "Развернуть сигнал стратегии"),
     BotCommand("hedge", "Вкл/выкл хеджирование позиций"),
     BotCommand("set_hedge", "Настроить триггер и размер хеджа"),
     BotCommand("strategy", "Статус BTC 5-min стратегии"),
@@ -134,6 +135,7 @@ class TelegramBot:
             ("auto_close", self._cmd_auto_close),
             ("set_take_profit", self._cmd_set_take_profit),
             ("set_stop_loss", self._cmd_set_stop_loss),
+            ("reverse", self._cmd_reverse),
             ("hedge", self._cmd_hedge),
             ("set_hedge", self._cmd_set_hedge),
             ("strategy", self._cmd_strategy),
@@ -734,6 +736,27 @@ class TelegramBot:
                 parse_mode="Markdown",
             )
 
+    async def _cmd_reverse(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not self.btc_strategy:
+            await update.message.reply_text("❌ Стратегия не инициализирована")  # type: ignore[union-attr]
+            return
+
+        self.btc_strategy.reverse_signal = (
+            not self.btc_strategy.reverse_signal
+        )
+        state = self.btc_strategy.reverse_signal
+        icon = "🔄" if state else "➡️"
+        mode = "mean-reversion" if state else "momentum"
+        await update.message.reply_text(  # type: ignore[union-attr]
+            f"{icon} Сигнал: *{'развёрнут' if state else 'прямой'}*\n"
+            f"Режим: *{mode}*\n\n"
+            f"_Прямой:_ модель предсказывает направление\n"
+            f"_Развёрнут:_ ставка против модели (mean-reversion)",
+            parse_mode="Markdown",
+        )
+
     async def _cmd_hedge(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -811,9 +834,12 @@ class TelegramBot:
             except Exception:
                 pass
 
+        sig_mode = "mean-reversion 🔄" if (
+            self.btc_strategy and self.btc_strategy.reverse_signal
+        ) else "momentum ➡️"
         await update.message.reply_text(  # type: ignore[union-attr]
             f"📈 *BTC 5-Min Strategy:*\n"
-            f"Режим: *{cfg.mode}*\n"
+            f"Режим: *{cfg.mode}* ({sig_mode})\n"
             f"BTC feed: {feed_status}{btc_price}\n"
             f"Активных рынков: *{markets_count}*\n"
             f"Edge порог: *{cfg.edge_threshold * 100:.1f}%*\n"
