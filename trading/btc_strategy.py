@@ -64,6 +64,8 @@ class BtcStrategy:
         self.signals = SignalEngine(feed)
         self._running = False
         self._notify_callback = None
+        self._failed_markets: dict[str, float] = {}
+        self._fail_cooldown = 60
 
     def set_notify(self, callback) -> None:
         self._notify_callback = callback
@@ -116,6 +118,9 @@ class BtcStrategy:
                 continue
             if market.condition_id in open_market_ids:
                 continue
+            cooldown_until = self._failed_markets.get(market.condition_id, 0)
+            if time.time() < cooldown_until:
+                continue
             if total_exposure >= max_exposure:
                 break
 
@@ -127,6 +132,10 @@ class BtcStrategy:
                 if trade:
                     total_exposure += trade.bet_usd
                     open_market_ids.add(market.condition_id)
+                else:
+                    self._failed_markets[market.condition_id] = (
+                        time.time() + self._fail_cooldown
+                    )
 
         await self._auto_take_profit(open_trades, sig)
 
