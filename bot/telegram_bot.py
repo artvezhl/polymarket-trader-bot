@@ -628,9 +628,7 @@ class TelegramBot:
                 result["pnl"],
                 result.get("fee", 0.0),
             )
-            await update.message.reply_text(  # type: ignore[union-attr]
-                text, parse_mode="Markdown"
-            )
+            await self.send_message(text)
         else:
             await update.message.reply_text(  # type: ignore[union-attr]
                 "❌ Не удалось закрыть позицию. "
