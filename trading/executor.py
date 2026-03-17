@@ -229,12 +229,19 @@ class TradeExecutor:
                 self.client.get_order_book, trade.token_id
             )
 
-            bids = book.get("bids", [])
+            bids = getattr(book, "bids", [])
             if not bids:
-                logger.warning("No bids for %s, cannot close", trade.question[:50])
+                logger.warning(
+                    "No bids for %s, cannot close", trade.question[:50]
+                )
                 return None
 
-            best_bid = float(bids[0]["price"])
+            first_bid = bids[0]
+            best_bid = float(
+                first_bid.price
+                if hasattr(first_bid, "price")
+                else first_bid["price"]
+            )
             shares = math.floor(trade.shares)
 
             order_args = OrderArgs(
