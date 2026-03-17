@@ -143,8 +143,10 @@ class Database:
 
     async def get_pnl_since(self, since: datetime) -> float:
         cursor = await self.conn.execute(
-            "SELECT COALESCE(SUM(pnl), 0) FROM trades WHERE resolved_at >= ?",
-            (since.isoformat(),),
+            """SELECT COALESCE(SUM(pnl), 0) FROM trades
+               WHERE status != ? AND
+               (resolved_at >= ? OR created_at >= ?)""",
+            (TradeStatus.OPEN.value, since.isoformat(), since.isoformat()),
         )
         row = await cursor.fetchone()
         return float(row[0]) if row else 0.0
