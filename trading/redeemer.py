@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from eth_account import Account
-from eth_account.messages import encode_structured_data
+from eth_account.messages import encode_typed_data
 from web3 import Web3
 
 from utils.config import SecretsConfig
@@ -159,7 +159,7 @@ class Redeemer:
                 "nonce": nonce,
             },
         }
-        signable = encode_structured_data(typed_data)
+        signable = encode_typed_data(typed_data)
         signed = self.account.sign_message(signable)
         return signed.r.to_bytes(32, "big") + signed.s.to_bytes(32, "big") + bytes([signed.v])
 
