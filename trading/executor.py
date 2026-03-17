@@ -112,7 +112,7 @@ class TradeExecutor:
                 self.client.create_order, order_args, options
             )
             resp = await asyncio.to_thread(
-                self.client.post_order, signed_order, OrderType.FOK
+                self.client.post_order, signed_order, OrderType.GTC
             )
 
             if not resp or resp.get("status") == "error":
@@ -203,7 +203,7 @@ class TradeExecutor:
                 self.client.create_order, order_args, options
             )
             resp = await asyncio.to_thread(
-                self.client.post_order, signed_order, OrderType.FOK
+                self.client.post_order, signed_order, OrderType.GTC
             )
 
             if not resp or resp.get("status") == "error":
