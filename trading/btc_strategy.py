@@ -283,6 +283,21 @@ class BtcStrategy:
                         result["pnl"],
                     )
 
+    def _estimate_strike(self, market_up_price: float) -> float:
+        """Estimate the strike price from market pricing.
+
+        If Up=50% the strike ≈ current price.
+        If Up=60% the price is above strike, so strike < current.
+        Uses inverse of the relationship: higher Up price → lower strike.
+        """
+        price = self.feed.price
+        if price <= 0:
+            return 0
+        if market_up_price <= 0.01 or market_up_price >= 0.99:
+            return price
+        ratio = (market_up_price - 0.5) * 0.002
+        return price * (1 - ratio)
+
     async def find_active_markets(self) -> list[BtcMarket]:
         results: list[BtcMarket] = []
         now = int(time.time())
@@ -352,11 +367,8 @@ class BtcStrategy:
                                 elif o.lower() == "down":
                                     down_idx = i
 
-                            strike = (
-                                self.feed.price
-                                if self.feed.price > 0
-                                else 0
-                            )
+                            up_p = _parse_float(prices[up_idx])
+                            strike = self._estimate_strike(up_p)
                             tick = (
                                 m.get("orderPriceMinTickSize") or "0.01"
                             )
