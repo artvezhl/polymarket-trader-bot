@@ -65,10 +65,16 @@ class BtcStrategy:
         self._running = False
         self._notify_callback = None
         self._failed_markets: dict[str, float] = {}
+        self._failed_closes: dict[int, float] = {}
         self._fail_cooldown = 60
         self.auto_close_enabled = False
         self.take_profit_pct = config.strategy.take_profit_pct
         self.stop_loss_pct = config.strategy.stop_loss_pct
+        self.hedge_enabled = False
+        self.hedge_trigger_pct = 0.05
+        self.hedge_ratio = 0.5
+        self.reverse_signal = False
+        self._hedged_trades: set[int] = set()
 
     def set_notify(self, callback) -> None:
         self._notify_callback = callback
@@ -141,6 +147,7 @@ class BtcStrategy:
                     )
 
         await self._auto_take_profit(open_trades, sig)
+        await self._hedge_positions(open_trades, markets)
 
     def _evaluate(
         self, market: BtcMarket, sig: dict, cfg
@@ -174,6 +181,9 @@ class BtcStrategy:
                 midprice=sig["mid_price"],
                 returns=returns,
             )
+
+        if self.reverse_signal:
+            p_up = 1.0 - p_up
 
         edge_up = compute_edge(p_up, market.up_price)
         edge_down = compute_edge(1 - p_up, market.down_price)
@@ -289,10 +299,13 @@ class BtcStrategy:
         if not self.auto_close_enabled:
             return
 
+        now = time.time()
         for trade in open_trades:
             if trade.current_price <= 0:
                 continue
             if trade.current_price >= 0.99 or trade.current_price <= 0.01:
+                continue
+            if now < self._failed_closes.get(trade.id or 0, 0):
                 continue
 
             pnl_pct = (
@@ -326,6 +339,10 @@ class BtcStrategy:
                         reason,
                         result["pnl"],
                     )
+                else:
+                    self._failed_closes[trade.id or 0] = (
+                        now + self._fail_cooldown
+                    )
 
     def _estimate_strike(self, market_up_price: float) -> float:
         """Estimate the strike price from market pricing.
@@ -341,6 +358,77 @@ class BtcStrategy:
             return price
         ratio = (market_up_price - 0.5) * 0.002
         return price * (1 - ratio)
+
+    async def _hedge_positions(
+        self, open_trades: list[Trade], markets: list[BtcMarket]
+    ) -> None:
+        if not self.hedge_enabled:
+            return
+
+        market_map = {m.condition_id: m for m in markets}
+
+        for trade in open_trades:
+            if trade.id in self._hedged_trades:
+                continue
+            if trade.current_price <= 0 or trade.bet_usd <= 0:
+                continue
+
+            pnl_pct = trade.unrealized_pnl / trade.bet_usd
+            if pnl_pct < self.hedge_trigger_pct:
+                continue
+
+            market = market_map.get(trade.market_id)
+            if not market or market.time_left < 30:
+                continue
+
+            is_up = trade.outcome.lower() == "up"
+            hedge_token = market.down_token_id if is_up else market.up_token_id
+            hedge_price = market.down_price if is_up else market.up_price
+            hedge_side = "Down" if is_up else "Up"
+
+            hedge_amount = round(trade.unrealized_pnl * self.hedge_ratio, 2)
+            if hedge_amount < 1.0:
+                continue
+
+            rounded_price = self.executor._round_to_tick(
+                hedge_price, market.tick_size
+            )
+            if rounded_price <= 0 or rounded_price >= 1:
+                continue
+
+            from trading.scanner import MarketOpportunity
+
+            opp = MarketOpportunity(
+                market_id=market.condition_id + "_hedge",
+                question=f"HEDGE: {market.question}",
+                probability=rounded_price,
+                outcome=hedge_side,
+                token_id=hedge_token,
+                liquidity=0,
+                end_date=None,
+                category="crypto",
+                tick_size=market.tick_size,
+                neg_risk=market.neg_risk,
+            )
+
+            balance = await self.executor.get_polymarket_balance()
+            hedge_trade = await self.executor.execute_trade(opp, balance)
+            if hedge_trade:
+                self._hedged_trades.add(trade.id)  # type: ignore[arg-type]
+                msg = (
+                    f"🛡 *Хедж-позиция:*\n"
+                    f"Основная: {trade.outcome} "
+                    f"(P&L: +{pnl_pct * 100:.1f}%)\n"
+                    f"Хедж: *{hedge_side}* @ ${rounded_price:.2f}\n"
+                    f"Сумма хеджа: ${hedge_trade.bet_usd:.2f}"
+                )
+                await self._notify(msg)
+                logger.info(
+                    "Hedge: %s -> %s $%.2f",
+                    trade.outcome,
+                    hedge_side,
+                    hedge_trade.bet_usd,
+                )
 
     async def find_active_markets(self) -> list[BtcMarket]:
         results: list[BtcMarket] = []
