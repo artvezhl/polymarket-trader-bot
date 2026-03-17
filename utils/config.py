@@ -21,7 +21,8 @@ class TradingConfig:
     min_end_date_days: int = 1
     price_check_interval_sec: int = 120
     price_spike_multiplier: float = 10.0
-    sync_interval_sec: int = 300
+    # Интервал фоновой синхронизации позиций (/sync) в секундах
+    sync_interval_sec: int = 120
 
 
 @dataclass
