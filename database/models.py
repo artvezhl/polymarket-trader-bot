@@ -36,6 +36,7 @@ class Trade:
     redeem_tx_hash: str = ""
     redeem_attempts: int = 0
     last_redeem_at: datetime | None = None
+    redeem_last_error: str = ""
 
     @property
     def shares(self) -> float:
@@ -81,6 +82,7 @@ class Trade:
             last_redeem_at=(
                 datetime.fromisoformat(row[20]) if len(row) > 20 and row[20] else None
             ),
+            redeem_last_error=str(row[21]) if len(row) > 21 and row[21] else "",
         )
 
 

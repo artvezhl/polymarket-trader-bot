@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from database.models import BalanceLog, Trade
+from trading.clob_positions import ClobOpenPosition
 from utils.config import TradingConfig
 
 
@@ -57,14 +58,72 @@ def format_status_report(
 
 def format_positions_list(trades: list[Trade]) -> str:
     if not trades:
-        return "📭 Нет открытых позиций"
+        return "📭 Нет открытых позиций (только записи бота в БД)"
 
-    lines = ["📋 *Открытые позиции:*\n"]
+    lines = ["📋 *Открытые позиции (только БД бота):*\n"]
     for i, t in enumerate(trades, 1):
         lines.append(
             f"{i}. _{t.question[:60]}_\n"
             f"   Исход: {t.outcome} | Вер: {t.probability * 100:.1f}% | "
             f"Ставка: ${t.bet_usd:.2f}"
+        )
+    return "\n".join(lines)
+
+
+def format_data_api_positions(
+    positions: list[dict],
+    error: str | None = None,
+) -> str:
+    """Позиции из Data API (реальные по кошельку)."""
+    if error:
+        return f"❌ Data API: `{error}`"
+    if not positions:
+        return "📭 Реальных позиций нет (Data API)"
+    lines = ["📊 *Реальные позиции (Data API):*\n"]
+    for i, p in enumerate(positions[:20], 1):
+        title = (p.get("title") or "—")[:70]
+        if len(str(p.get("title") or "")) > 70:
+            title += "…"
+        size = p.get("size") or 0
+        outcome = p.get("outcome") or "—"
+        lines.append(f"{i}. _{title}_\n   {outcome} | size: `{size}`")
+    if len(positions) > 20:
+        lines.append(f"\n_…и ещё {len(positions) - 20}_")
+    return "\n".join(lines)
+
+
+def format_clob_positions_list(
+    positions: list[ClobOpenPosition],
+    clob_error: str | None = None,
+) -> str:
+    """Позиции по нетто из Polymarket CLOB (все сделки аккаунта)."""
+    if clob_error:
+        return (
+            "❌ *Не удалось загрузить историю сделок CLOB*\n"
+            f"`{clob_error}`\n\n"
+            "Часто: *POLYMARKET_API_SECRET* не валидный base64 (без кавычек и "
+            "переносов), или ключи API не от этого кошелька. "
+            "Перевыпустите ключи в Polymarket / проверьте `.env`."
+        )
+    if not positions:
+        return (
+            "📭 По истории CLOB нет ненулевых позиций "
+            "(нетто по всем токенам ≈ 0)."
+        )
+
+    lines = [
+        "📊 *Все позиции (Polymarket CLOB, нетто по token):*\n",
+        "_Источник: история сделок `get_trades`, не только БД бота._\n",
+    ]
+    for i, p in enumerate(positions, 1):
+        status = "🔒 закрыт" if p.market_closed else "⏳ открыт"
+        price_s = f"{p.current_price * 100:.1f}¢" if p.current_price > 0 else "—"
+        val_s = f" ~${p.notional_usd:.2f}" if p.notional_usd > 0 else ""
+        q = p.question[:70] + "…" if len(p.question) > 70 else p.question
+        lines.append(
+            f"{i}. _{q}_\n"
+            f"   {status} | {p.outcome} | shares: `{p.shares:.4f}` | "
+            f"цена: {price_s}{val_s}"
         )
     return "\n".join(lines)
 

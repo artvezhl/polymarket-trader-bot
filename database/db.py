@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS trades (
     redeemed INTEGER DEFAULT 0,
     redeem_tx_hash TEXT DEFAULT '',
     redeem_attempts INTEGER DEFAULT 0,
-    last_redeem_at TIMESTAMP
+    last_redeem_at TIMESTAMP,
+    redeem_last_error TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS balance_log (
@@ -43,6 +44,30 @@ CREATE TABLE IF NOT EXISTS balance_log (
     positions_value REAL,
     total_value REAL,
     timestamp TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS watched_wallets (
+    address TEXT PRIMARY KEY,
+    label TEXT DEFAULT '',
+    created_at TIMESTAMP,
+    watch_initialized INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS watch_notified_trades (
+    wallet_address TEXT NOT NULL,
+    transaction_hash TEXT NOT NULL,
+    asset TEXT NOT NULL,
+    notified_at TIMESTAMP,
+    PRIMARY KEY (wallet_address, transaction_hash, asset)
+);
+
+CREATE TABLE IF NOT EXISTS clob_redeem_log (
+    condition_id TEXT PRIMARY KEY,
+    redeemed INTEGER DEFAULT 0,
+    redeem_tx_hash TEXT DEFAULT '',
+    redeem_attempts INTEGER DEFAULT 0,
+    last_redeem_at TIMESTAMP,
+    redeem_last_error TEXT DEFAULT ''
 );
 """
 
@@ -56,6 +81,16 @@ MIGRATIONS = [
     "ALTER TABLE trades ADD COLUMN redeem_tx_hash TEXT DEFAULT ''",
     "ALTER TABLE trades ADD COLUMN redeem_attempts INTEGER DEFAULT 0",
     "ALTER TABLE trades ADD COLUMN last_redeem_at TIMESTAMP",
+    "ALTER TABLE trades ADD COLUMN redeem_last_error TEXT DEFAULT ''",
+    "ALTER TABLE watched_wallets ADD COLUMN watch_initialized INTEGER DEFAULT 0",
+    """CREATE TABLE IF NOT EXISTS clob_redeem_log (
+        condition_id TEXT PRIMARY KEY,
+        redeemed INTEGER DEFAULT 0,
+        redeem_tx_hash TEXT DEFAULT '',
+        redeem_attempts INTEGER DEFAULT 0,
+        last_redeem_at TIMESTAMP,
+        redeem_last_error TEXT DEFAULT ''
+    )""",
 ]
 
 
@@ -279,20 +314,187 @@ class Database:
         return [Trade.from_row(row) for row in rows]
 
     async def mark_redeem_result(
-        self, trade_id: int, tx_hash: str, success: bool
+        self,
+        trade_id: int,
+        tx_hash: str,
+        success: bool,
+        last_error: str | None = None,
     ) -> None:
         now = datetime.now().isoformat()
-        redeemed_val = 1 if success else 0
+        err = ((last_error or "")[:2000]) if not success else ""
+        if success:
+            await self.conn.execute(
+                """
+                UPDATE trades SET
+                    redeemed = 1,
+                    redeem_tx_hash = ?,
+                    redeem_attempts = COALESCE(redeem_attempts, 0) + 1,
+                    last_redeem_at = ?,
+                    redeem_last_error = ''
+                WHERE id = ?
+                """,
+                (tx_hash, now, trade_id),
+            )
+        else:
+            await self.conn.execute(
+                """
+                UPDATE trades SET
+                    redeem_attempts = COALESCE(redeem_attempts, 0) + 1,
+                    last_redeem_at = ?,
+                    redeem_last_error = ?
+                WHERE id = ?
+                """,
+                (now, err, trade_id),
+            )
+        await self.conn.commit()
+
+    async def add_watched_wallet(self, address: str, label: str = "") -> None:
+        addr = address.lower()
+        await self.conn.execute(
+            """INSERT INTO watched_wallets (address, label, created_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(address) DO UPDATE SET label = excluded.label""",
+            (addr, label.strip(), datetime.now().isoformat()),
+        )
+        await self.conn.commit()
+
+    async def remove_watched_wallet(self, address: str) -> bool:
+        addr = address.lower()
+        cur = await self.conn.execute(
+            "DELETE FROM watched_wallets WHERE address = ?", (addr,)
+        )
+        await self.conn.commit()
+        return cur.rowcount > 0  # type: ignore[no-any-return]
+
+    async def list_watched_wallets(
+        self,
+    ) -> list[tuple[str, str, bool]]:
+        cursor = await self.conn.execute(
+            """SELECT address, label, COALESCE(watch_initialized, 0)
+               FROM watched_wallets ORDER BY created_at ASC"""
+        )
+        rows = await cursor.fetchall()
+        return [
+            (str(r[0]), str(r[1] or ""), bool(r[2])) for r in rows
+        ]
+
+    async def mark_watch_initialized(self, address: str) -> None:
+        addr = address.lower()
+        await self.conn.execute(
+            "UPDATE watched_wallets SET watch_initialized = 1 WHERE address = ?",
+            (addr,),
+        )
+        await self.conn.commit()
+
+    async def try_insert_watch_notification(
+        self, wallet_address: str, transaction_hash: str, asset: str
+    ) -> bool:
+        """Return True if this trade was not notified before (row inserted)."""
+        w = wallet_address.lower()
+        cur = await self.conn.execute(
+            """INSERT OR IGNORE INTO watch_notified_trades
+               (wallet_address, transaction_hash, asset, notified_at)
+               VALUES (?, ?, ?, ?)""",
+            (w, transaction_hash, asset or "", datetime.now().isoformat()),
+        )
+        await self.conn.commit()
+        return cur.rowcount > 0  # type: ignore[no-any-return]
+
+    async def clob_redeem_already_done(self, condition_id: str) -> bool:
+        cursor = await self.conn.execute(
+            """SELECT COALESCE(redeemed, 0) FROM clob_redeem_log
+               WHERE condition_id = ?""",
+            (condition_id,),
+        )
+        row = await cursor.fetchone()
+        return bool(row and row[0])
+
+    async def sync_trades_redeem_from_clob_log(self, condition_id: str) -> None:
+        """Выставить redeemed у WON-сделок, если по CLOB уже зачислили."""
+        cursor = await self.conn.execute(
+            """SELECT redeem_tx_hash FROM clob_redeem_log
+               WHERE condition_id = ? AND COALESCE(redeemed, 0) = 1""",
+            (condition_id,),
+        )
+        row = await cursor.fetchone()
+        if not row or not row[0]:
+            return
+        txh = str(row[0])
+        now = datetime.now().isoformat()
         await self.conn.execute(
             """
-            UPDATE trades
-            SET
-                redeemed = CASE WHEN ?1 = 1 THEN 1 ELSE COALESCE(redeemed, 0) END,
-                redeem_tx_hash = CASE WHEN ?1 = 1 THEN ?2 ELSE redeem_tx_hash END,
-                redeem_attempts = COALESCE(redeem_attempts, 0) + 1,
+            UPDATE trades SET
+                redeemed = 1,
+                redeem_tx_hash = ?,
                 last_redeem_at = ?
-            WHERE id = ?
+            WHERE market_id = ? AND status = ? AND COALESCE(redeemed, 0) = 0
             """,
-            (redeemed_val, tx_hash, now, trade_id),
+            (txh, now, condition_id, TradeStatus.WON.value),
+        )
+        await self.conn.commit()
+
+    async def mark_clob_redeem_result(
+        self,
+        condition_id: str,
+        tx_hash: str,
+        success: bool,
+        last_error: str | None = None,
+    ) -> None:
+        now = datetime.now().isoformat()
+        err = ((last_error or "")[:2000]) if not success else ""
+        cur = await self.conn.execute(
+            "SELECT redeem_attempts FROM clob_redeem_log WHERE condition_id = ?",
+            (condition_id,),
+        )
+        row = await cur.fetchone()
+        attempts = (int(row[0]) if row and row[0] is not None else 0) + 1
+        if success:
+            await self.conn.execute(
+                """
+                INSERT INTO clob_redeem_log
+                    (condition_id, redeemed, redeem_tx_hash, redeem_attempts,
+                     last_redeem_at, redeem_last_error)
+                VALUES (?, 1, ?, ?, ?, '')
+                ON CONFLICT(condition_id) DO UPDATE SET
+                    redeemed = 1,
+                    redeem_tx_hash = excluded.redeem_tx_hash,
+                    redeem_attempts = excluded.redeem_attempts,
+                    last_redeem_at = excluded.last_redeem_at,
+                    redeem_last_error = ''
+                """,
+                (condition_id, tx_hash, attempts, now),
+            )
+        else:
+            await self.conn.execute(
+                """
+                INSERT INTO clob_redeem_log
+                    (condition_id, redeemed, redeem_tx_hash, redeem_attempts,
+                     last_redeem_at, redeem_last_error)
+                VALUES (?, 0, '', ?, ?, ?)
+                ON CONFLICT(condition_id) DO UPDATE SET
+                    redeem_attempts = excluded.redeem_attempts,
+                    last_redeem_at = excluded.last_redeem_at,
+                    redeem_last_error = excluded.redeem_last_error
+                """,
+                (condition_id, attempts, now, err),
+            )
+        await self.conn.commit()
+
+    async def mark_trades_redeemed_by_condition(
+        self, condition_id: str, tx_hash: str
+    ) -> None:
+        """Пометить все WON-сделки с этим market_id (condition) как redeemed."""
+        now = datetime.now().isoformat()
+        await self.conn.execute(
+            """
+            UPDATE trades SET
+                redeemed = 1,
+                redeem_tx_hash = ?,
+                redeem_attempts = COALESCE(redeem_attempts, 0) + 1,
+                last_redeem_at = ?,
+                redeem_last_error = ''
+            WHERE market_id = ? AND status = ?
+            """,
+            (tx_hash, now, condition_id, TradeStatus.WON.value),
         )
         await self.conn.commit()

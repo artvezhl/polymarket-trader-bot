@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta
 from functools import wraps
 from typing import Any, Callable, Coroutine
@@ -15,6 +14,8 @@ from telegram.ext import (
 
 from bot.notifications import (
     SCAN_PAGE_SIZE,
+    format_clob_positions_list,
+    format_data_api_positions,
     format_close_list,
     format_close_result,
     format_history,
@@ -25,10 +26,16 @@ from bot.notifications import (
     format_status_report,
 )
 from database.db import Database
+from trading.clob_positions import fetch_clob_open_positions
+from trading.data_api import fetch_positions_async
 from trading.executor import TradeExecutor
 from trading.portfolio import PortfolioManager
-from trading.redeemer import Redeemer
+from trading.redeemer import Redeemer, redeem_all_pending
 from trading.scanner import MarketScanner
+from trading.wallet_watch import (
+    is_valid_wallet_address,
+    normalize_wallet_address,
+)
 from utils.config import AppConfig
 from utils.logger import logger
 
@@ -38,7 +45,7 @@ BOT_COMMANDS = [
     BotCommand("start", "Запуск бота и приветствие"),
     BotCommand("status", "Текущий статус (вкл/выкл, параметры)"),
     BotCommand("balance", "Баланс: свободные USDC + позиции"),
-    BotCommand("positions", "Список открытых позиций"),
+    BotCommand("positions", "Позиции: Data API + CLOB + БД"),
     BotCommand("start_trading", "Запустить торговлю"),
     BotCommand("stop_trading", "Остановить торговлю"),
     BotCommand("settings", "Все текущие настройки"),
@@ -64,6 +71,9 @@ BOT_COMMANDS = [
     BotCommand("scan", "Сканировать рынки (показать кол-во)"),
     BotCommand("sync", "Синхронизировать с CLOB API"),
     BotCommand("redeem", "Зачислить выигрыши на счёт"),
+    BotCommand("watch_add", "Подписаться на сделки кошелька Polymarket"),
+    BotCommand("watch_list", "Список отслеживаемых кошельков"),
+    BotCommand("watch_remove", "Отписаться от кошелька"),
     BotCommand("fees", "Статистика по комиссиям"),
     BotCommand("report", "Полный отчёт"),
     BotCommand("history", "Последние 20 сделок"),
@@ -143,6 +153,9 @@ class TelegramBot:
             ("scan", self._cmd_scan),
             ("sync", self._cmd_sync),
             ("redeem", self._cmd_redeem),
+            ("watch_add", self._cmd_watch_add),
+            ("watch_list", self._cmd_watch_list),
+            ("watch_remove", self._cmd_watch_remove),
             ("fees", self._cmd_fees),
             ("report", self._cmd_report),
             ("history", self._cmd_history),
@@ -177,16 +190,17 @@ class TelegramBot:
                 len(BOT_COMMANDS),
             )
 
-    async def send_message(self, text: str) -> None:
+    async def send_message(
+        self, text: str, parse_mode: str | None = "Markdown"
+    ) -> None:
         if not self._app or not self.config.telegram.admin_ids:
             return
         for admin_id in self.config.telegram.admin_ids:
             try:
-                await self._app.bot.send_message(
-                    chat_id=admin_id,
-                    text=text,
-                    parse_mode="Markdown",
-                )
+                kwargs: dict = {"chat_id": admin_id, "text": text}
+                if parse_mode is not None:
+                    kwargs["parse_mode"] = parse_mode
+                await self._app.bot.send_message(**kwargs)
             except Exception as e:
                 logger.error(
                     "Failed to send message to %d: %s", admin_id, e
@@ -247,11 +261,55 @@ class TelegramBot:
     async def _cmd_positions(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
+        addr = self.config.secrets.proxy_address or ""
+        if not addr and self.config.secrets.private_key:
+            from eth_account import Account
+            addr = Account.from_key(self.config.secrets.private_key).address
+        if addr:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "⏳ Загружаю позиции из Data API…"
+            )
+            try:
+                data_positions = await fetch_positions_async(addr)
+                text = format_data_api_positions(data_positions)
+            except Exception as e:
+                logger.error("fetch_positions_async: %s", e)
+                text = format_data_api_positions([], str(e))
+            await update.message.reply_text(  # type: ignore[union-attr]
+                text, parse_mode="Markdown"
+            )
+
+        if self.executor:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "⏳ Загружаю позиции из Polymarket CLOB…"
+            )
+            try:
+                snap = await fetch_clob_open_positions(self.executor)
+                main_text = format_clob_positions_list(
+                    snap.positions, snap.clob_error
+                )
+            except Exception as e:
+                logger.error("fetch_clob_open_positions: %s", e)
+                main_text = format_clob_positions_list([], str(e))
+            await update.message.reply_text(  # type: ignore[union-attr]
+                main_text, parse_mode="Markdown"
+            )
+        elif not addr:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "⚠️ Нет POLYMARKET_PROXY_ADDRESS и PRIVATE_KEY — "
+                "показываю только БД бота."
+            )
+
         trades = await self.db.get_open_trades()
-        text = format_positions_list(trades)
-        await update.message.reply_text(  # type: ignore[union-attr]
-            text, parse_mode="Markdown"
-        )
+        if trades:
+            db_text = format_positions_list(trades)
+            await update.message.reply_text(  # type: ignore[union-attr]
+                db_text, parse_mode="Markdown"
+            )
+        elif not self.executor:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                format_positions_list([]), parse_mode="Markdown"
+            )
 
     async def _cmd_settings(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -1023,11 +1081,15 @@ class TelegramBot:
         try:
             result = await self.executor.sync_positions(self.db)
             open_now = await self.db.get_open_trades()
+            extra = ""
+            if result.get("clob_error"):
+                extra = f"\n⚠️ CLOB trades: `{result['clob_error']}`"
             await update.message.reply_text(  # type: ignore[union-attr]
                 f"✅ *Синхронизация завершена:*\n"
                 f"Сделок в CLOB: {result['clob_trades']}\n"
                 f"Открытых в БД: {len(open_now)}\n"
-                f"Закрыто/resolved: {result['resolved']}",
+                f"Закрыто/resolved: {result['resolved']}"
+                f"{extra}",
                 parse_mode="Markdown",
             )
         except Exception as e:
@@ -1041,42 +1103,108 @@ class TelegramBot:
     ) -> None:
         if not self.redeemer:
             await update.message.reply_text(  # type: ignore[union-attr]
-                "❌ Redeemer не настроен (нет proxy\\_address или RPC)",
+                "❌ Redeemer не настроен: нужен `PRIVATE_KEY` и либо "
+                "`POLYMARKET_PROXY_ADDRESS` (Safe), либо `POLYMARKET_SIG_TYPE=0` (EOA).",
                 parse_mode="Markdown",
             )
             return
 
-        won_trades = await self.db.get_unredeemed_won_trades(100)
+        await update.message.reply_text(  # type: ignore[union-attr]
+            "💰 Запуск redeem: сначала **Polymarket CLOB** (нетто-позиции), "
+            "затем записи WON в БД.",
+            parse_mode="Markdown",
+        )
 
-        if not won_trades:
-            await update.message.reply_text(  # type: ignore[union-attr]
-                "📭 Нет выигрышных позиций для зачисления"
+        summary = await redeem_all_pending(
+            self.db,
+            self.redeemer,
+            self.executor,
+            max_trades=100,
+        )
+        if summary.total == 0 and not summary.errors:
+            text = (
+                "📭 Нет кандидатов на redeem "
+                "(нет выигрышного нетто по CLOB и нет WON в БД)."
             )
+            await self.send_message(text, parse_mode=None)
+            await update.message.reply_text(text)  # type: ignore[union-attr]
             return
 
+        lines = [
+            f"✅ Успешных redeem: {summary.succeeded} из {summary.total} попыток",
+        ]
+        if summary.errors:
+            lines.append("")
+            lines.append("Ошибки:")
+            for err in summary.errors[:8]:
+                lines.append(f"• {err}")
+            if len(summary.errors) > 8:
+                lines.append(f"… и ещё {len(summary.errors) - 8}")
+        text = "\n".join(lines)
+        await self.send_message(text, parse_mode=None)
         await update.message.reply_text(  # type: ignore[union-attr]
-            f"💰 Зачисляю {len(won_trades)} выигрышей..."
+            text[:4000]
         )
 
-        redeemed = 0
-        for trade in won_trades:
-            neg_risk = False
-            if trade.token_id and self.executor:
-                neg_risk = await asyncio.to_thread(
-                    self.executor.client.get_neg_risk, trade.token_id
-                )
-            tx = await self.redeemer.redeem(
-                trade.market_id, neg_risk=neg_risk
+    async def _cmd_watch_add(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        args = context.args or []
+        if not args or not is_valid_wallet_address(args[0]):
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "Использование: `/watch_add 0x… [метка]`",
+                parse_mode="Markdown",
             )
-            await self.db.mark_redeem_result(
-                trade.id, tx or "", bool(tx)  # type: ignore[arg-type]
-            )
-            if tx:
-                redeemed += 1
-
-        await self.send_message(
-            f"✅ Зачислено: {redeemed}/{len(won_trades)} позиций"
+            return
+        addr = normalize_wallet_address(args[0])
+        label = " ".join(args[1:]).strip() if len(args) > 1 else ""
+        await self.db.add_watched_wallet(addr, label)
+        await update.message.reply_text(  # type: ignore[union-attr]
+            f"✅ Кошелёк добавлен: `{addr}`"
+            + (f" ({label})" if label else "")
+            + "\nПервый опрос пометит текущие сделки без уведомлений.",
+            parse_mode="Markdown",
         )
+
+    async def _cmd_watch_list(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        rows = await self.db.list_watched_wallets()
+        if not rows:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "Список пуст. `/watch_add 0x…`",
+                parse_mode="Markdown",
+            )
+            return
+        lines = ["*Отслеживаемые кошельки:*"]
+        for addr, label, init in rows:
+            status = "🟢" if init else "⏳"
+            lab = f" — _{label}_" if label else ""
+            lines.append(f"{status} `{addr}`{lab}")
+        await update.message.reply_text(  # type: ignore[union-attr]
+            "\n".join(lines), parse_mode="Markdown"
+        )
+
+    async def _cmd_watch_remove(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        args = context.args or []
+        if not args or not is_valid_wallet_address(args[0]):
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "Использование: `/watch_remove 0x…`",
+                parse_mode="Markdown",
+            )
+            return
+        addr = normalize_wallet_address(args[0])
+        removed = await self.db.remove_watched_wallet(addr)
+        if removed:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                f"✅ Удалён `{addr}`", parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "Такого адреса в списке нет."
+            )
 
     async def _cmd_fees(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE

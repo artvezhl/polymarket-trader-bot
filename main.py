@@ -6,6 +6,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import aiohttp
+
 from bot.notifications import (
     format_new_trade,
     format_position_resolved,
@@ -19,8 +21,13 @@ from trading.btc_feed import BtcFeed
 from trading.btc_strategy import BtcStrategy
 from trading.executor import TradeExecutor
 from trading.portfolio import PortfolioManager
-from trading.redeemer import Redeemer
+from trading.redeemer import Redeemer, redeem_all_pending
 from trading.scanner import MarketScanner
+from trading.wallet_watch import (
+    fetch_recent_trades,
+    format_watch_trade_message,
+    trade_timestamp,
+)
 from utils.config import AppConfig, apply_db_overrides, load_config
 from utils.logger import logger
 
@@ -37,7 +44,10 @@ class TradingEngine:
             config, self.db, self.executor, self.btc_feed
         )
         self.redeemer: Redeemer | None = None
-        if config.secrets.proxy_address:
+        if config.secrets.private_key and (
+            config.secrets.proxy_address
+            or config.secrets.signature_type == 0
+        ):
             self.redeemer = Redeemer(config.secrets)
 
         self.tg_bot = TelegramBot(
@@ -81,6 +91,8 @@ class TradingEngine:
             asyncio.create_task(self._positions_report_loop(), name="positions_report"),
             # периодический аналог /sync
             asyncio.create_task(self._sync_loop(), name="sync_loop"),
+            asyncio.create_task(self._redeem_loop(), name="redeem_loop"),
+            asyncio.create_task(self._wallet_watch_loop(), name="wallet_watch"),
         ]
 
         await self.tg_bot.send_message(
@@ -276,6 +288,80 @@ class TradingEngine:
                 )
             except Exception as e:
                 logger.error("Sync loop error: %s", e)
+
+    async def _redeem_loop(self) -> None:
+        interval = self.config.trading.redeem_interval_sec
+        if interval <= 0:
+            return
+        while not self._shutdown.is_set():
+            try:
+                await asyncio.wait_for(
+                    self._shutdown.wait(),
+                    timeout=interval,
+                )
+                return
+            except asyncio.TimeoutError:
+                pass
+            if not self.redeemer or not self.executor:
+                continue
+            try:
+                summary = await redeem_all_pending(
+                    self.db, self.redeemer, self.executor, 100
+                )
+                if summary.total == 0:
+                    continue
+                if summary.succeeded > 0:
+                    await self.tg_bot.send_message(
+                        f"♻️ Авто-redeem: зачислено {summary.succeeded}/"
+                        f"{summary.total} позиций",
+                        parse_mode=None,
+                    )
+                elif summary.errors:
+                    logger.warning(
+                        "Auto-redeem all failed: %s", "; ".join(summary.errors[:3])
+                    )
+            except Exception as e:
+                logger.error("Redeem loop error: %s", e)
+
+    async def _wallet_watch_loop(self) -> None:
+        interval = self.config.trading.watch_poll_interval_sec
+        if interval <= 0:
+            return
+        async with aiohttp.ClientSession() as session:
+            while not self._shutdown.is_set():
+                try:
+                    await asyncio.wait_for(
+                        self._shutdown.wait(),
+                        timeout=interval,
+                    )
+                    return
+                except asyncio.TimeoutError:
+                    pass
+                try:
+                    rows = await self.db.list_watched_wallets()
+                    for addr, label, initialized in rows:
+                        trades, fetch_ok = await fetch_recent_trades(
+                            session, addr
+                        )
+                        if not fetch_ok:
+                            continue
+                        for t in sorted(trades, key=trade_timestamp):
+                            txh = t.get("transactionHash") or ""
+                            asset = str(t.get("asset") or "")
+                            if not txh:
+                                continue
+                            new = await self.db.try_insert_watch_notification(
+                                addr, txh, asset
+                            )
+                            if initialized and new:
+                                msg = format_watch_trade_message(
+                                    addr, label, t
+                                )
+                                await self.tg_bot.send_message(msg)
+                        if not initialized:
+                            await self.db.mark_watch_initialized(addr)
+                except Exception as e:
+                    logger.error("Wallet watch loop error: %s", e)
 
 
 def main() -> None:

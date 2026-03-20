@@ -9,6 +9,4 @@ __pycache__/
 logs/
 *.db
 .env
-tests/
-requirements-dev.txt
 *.md

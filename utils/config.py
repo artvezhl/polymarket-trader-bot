@@ -7,6 +7,9 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 
+# Публичный polygon-rpc.com часто отдаёт 401 из Docker/облака; PublicNode стабильнее для дефолта.
+DEFAULT_POLYGON_RPC_URL = "https://polygon-bor.publicnode.com"
+
 
 @dataclass
 class TradingConfig:
@@ -23,12 +26,18 @@ class TradingConfig:
     price_spike_multiplier: float = 10.0
     # Интервал фоновой синхронизации позиций (/sync) в секундах
     sync_interval_sec: int = 120
+    # Авто-redeem выигрышных позиций (0 = выключено)
+    redeem_interval_sec: int = 600
+    # Опрос сделок отслеживаемых кошельков (Data API)
+    watch_poll_interval_sec: int = 60
 
 
 @dataclass
 class StrategyConfig:
     mode: str = "btc_5min"
     edge_threshold: float = 0.03
+    limit_price: float = 0.95
+    min_favorite_price: float = 0.90
     update_interval_ms: int = 500
     volatility_window_sec: int = 60
     momentum_window_ticks: int = 20
@@ -59,9 +68,12 @@ class SecretsConfig:
     polymarket_api_key: str = ""
     polymarket_api_secret: str = ""
     polymarket_api_passphrase: str = ""
-    polygon_rpc_url: str = "https://polygon-rpc.com"
+    polygon_rpc_url: str = DEFAULT_POLYGON_RPC_URL
     signature_type: int = 2
     proxy_address: str = ""
+    # Relayer API Keys (gasless): https://docs.polymarket.com/trading/gasless
+    relayer_api_key: str = ""
+    relayer_api_key_address: str = ""
 
 
 @dataclass
@@ -111,9 +123,11 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> App
         polymarket_api_key=os.getenv("POLYMARKET_API_KEY", ""),
         polymarket_api_secret=os.getenv("POLYMARKET_API_SECRET", ""),
         polymarket_api_passphrase=os.getenv("POLYMARKET_API_PASSPHRASE", ""),
-        polygon_rpc_url=os.getenv("POLYGON_RPC_URL", "https://polygon-rpc.com"),
+        polygon_rpc_url=os.getenv("POLYGON_RPC_URL", DEFAULT_POLYGON_RPC_URL),
         signature_type=int(os.getenv("POLYMARKET_SIG_TYPE", "2")),
         proxy_address=os.getenv("POLYMARKET_PROXY_ADDRESS", ""),
+        relayer_api_key=os.getenv("RELAYER_API_KEY", ""),
+        relayer_api_key_address=os.getenv("RELAYER_API_KEY_ADDRESS", ""),
     )
 
     return AppConfig(
@@ -137,6 +151,8 @@ TRADING_CONFIG_KEYS = {
     "price_check_interval_sec": int,
     "price_spike_multiplier": float,
     "sync_interval_sec": int,
+    "redeem_interval_sec": int,
+    "watch_poll_interval_sec": int,
 }
 
 TRADING_LIST_KEYS = {"skip_keywords"}

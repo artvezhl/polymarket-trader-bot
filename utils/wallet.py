@@ -4,7 +4,9 @@ import asyncio
 
 from web3 import Web3
 
+from utils.config import DEFAULT_POLYGON_RPC_URL
 from utils.logger import logger
+from utils.polygon_web3 import make_polygon_web3
 
 USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
 USDC_ABI = [
@@ -20,7 +22,7 @@ USDC_ABI = [
 
 class WalletManager:
     def __init__(
-        self, private_key: str, rpc_url: str = "https://polygon-rpc.com"
+        self, private_key: str, rpc_url: str = DEFAULT_POLYGON_RPC_URL
     ):
         self._private_key = private_key
         self._rpc_url = rpc_url
@@ -30,7 +32,7 @@ class WalletManager:
     @property
     def w3(self) -> Web3:
         if self._w3 is None:
-            self._w3 = Web3(Web3.HTTPProvider(self._rpc_url))
+            self._w3 = make_polygon_web3(self._rpc_url)
         return self._w3
 
     @property

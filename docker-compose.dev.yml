@@ -1,0 +1,75 @@
+# Локальная разработка и тесты в Docker.
+#
+# Тесты (без реальных секретов):
+#   docker compose -f docker-compose.dev.yml run --rm test
+#
+# Интерактивная оболочка с примонтированным кодом:
+#   docker compose -f docker-compose.dev.yml run --rm dev bash
+#
+# Запуск бота внутри контейнера (нужен .env с секретами):
+#   docker compose -f docker-compose.dev.yml --env-file .env run --rm dev python main.py
+#
+# Отладка (debugpy, порт 5678):
+#   docker compose -f docker-compose.dev.yml --profile debug --env-file .env up dev-debug
+#   затем Run & Debug → "Attach to Docker (Python)"
+
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: polymarket-trader-bot:dev
+    container_name: polymarket-bot-dev
+    working_dir: /app
+    volumes:
+      - .:/app
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PYTHONUNBUFFERED: "1"
+    stdin_open: true
+    tty: true
+    profiles:
+      - dev
+
+  dev-debug:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: polymarket-trader-bot:dev
+    container_name: polymarket-bot-dev-debug
+    working_dir: /app
+    volumes:
+      - .:/app
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PYTHONUNBUFFERED: "1"
+    command: ["python", "-m", "debugpy", "--listen", "0.0.0.0:5678", "--wait-for-client", "main.py"]
+    ports:
+      - "5678:5678"
+    profiles:
+      - debug
+
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: polymarket-trader-bot:dev
+    container_name: polymarket-bot-test
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      PYTHONUNBUFFERED: "1"
+      # Тесты не ходят в Polymarket/Telegram; фикстуры в tests/conftest.py
+      TELEGRAM_BOT_TOKEN: ""
+      PRIVATE_KEY: ""
+      POLYMARKET_API_KEY: ""
+      POLYMARKET_API_SECRET: ""
+      POLYMARKET_API_PASSPHRASE: ""
+    command: ["sh", "-c", "ruff check . && python -m pytest tests/ -v --tb=short"]
+    profiles:
+      - test

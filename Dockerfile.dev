@@ -1,0 +1,23 @@
+# Dev/test image: Python 3.12 + app deps + ruff, pytest, etc.
+# Production image remains ./Dockerfile (slim, no dev tools).
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt
+
+COPY . .
+
+RUN mkdir -p /app/logs /app/data
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Override in compose: bash, pytest, sleep infinity, etc.
+CMD ["python", "main.py"]

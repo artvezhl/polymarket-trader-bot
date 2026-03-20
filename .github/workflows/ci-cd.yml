@@ -69,7 +69,7 @@ jobs:
             POLYMARKET_API_KEY=${POLYMARKET_API_KEY}
             POLYMARKET_API_SECRET=${POLYMARKET_API_SECRET}
             POLYMARKET_API_PASSPHRASE=${POLYMARKET_API_PASSPHRASE}
-            POLYGON_RPC_URL=${POLYGON_RPC_URL:-https://polygon-rpc.com}
+            POLYGON_RPC_URL=${POLYGON_RPC_URL:-https://polygon-bor.publicnode.com}
             POLYMARKET_PROXY_ADDRESS=${POLYMARKET_PROXY_ADDRESS}
             EOF
 

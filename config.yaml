@@ -10,10 +10,15 @@ trading:
   min_end_date_days: 1
   price_check_interval_sec: 120
   price_spike_multiplier: 10.0
+  sync_interval_sec: 120
+  redeem_interval_sec: 0
+  watch_poll_interval_sec: 60
 
 strategy:
-  mode: btc_5min
+  mode: btc_eth_95_limit
   edge_threshold: 0.03
+  limit_price: 0.95
+  min_favorite_price: 0.90
   update_interval_ms: 500
   volatility_window_sec: 60
   momentum_window_ticks: 20

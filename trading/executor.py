@@ -17,6 +17,7 @@ from py_clob_client.order_builder.constants import BUY, SELL
 
 from database.db import Database
 from database.models import Trade, TradeStatus
+from trading.clob_account import ClobTradesFetch, fetch_all_clob_trades
 from trading.scanner import MarketOpportunity
 from utils.config import AppConfig
 from utils.logger import logger
@@ -50,18 +51,21 @@ class TradeExecutor:
         return self._client
 
     async def get_clob_trades(self) -> list[dict]:
-        try:
-            resp = await asyncio.to_thread(self.client.get_trades)
-            return resp if isinstance(resp, list) else []
-        except Exception as e:
-            logger.error("Failed to get CLOB trades: %s", e)
-            return []
+        r = await fetch_all_clob_trades(self.client)
+        return r.trades
+
+    async def fetch_clob_trades_result(self) -> ClobTradesFetch:
+        """История сделок + ошибка API (для диагностики)."""
+        return await fetch_all_clob_trades(self.client)
 
     async def sync_positions(self, db) -> dict:
         """Sync DB trades with CLOB API. Returns summary."""
         from database.models import TradeStatus
 
-        clob_trades = await self.get_clob_trades()
+        clob_fetch = await fetch_all_clob_trades(self.client)
+        if clob_fetch.error:
+            logger.warning("CLOB get_trades: %s", clob_fetch.error)
+        clob_trades = clob_fetch.trades
         db_open = await db.get_open_trades()
 
         resolved = 0
@@ -118,6 +122,7 @@ class TradeExecutor:
             "clob_trades": len(clob_trades),
             "db_open": len(db_open),
             "resolved": resolved,
+            "clob_error": clob_fetch.error,
         }
 
     async def get_polymarket_balance(self) -> float:
@@ -147,9 +152,14 @@ class TradeExecutor:
         return round(bet, 2)
 
     async def execute_trade(
-        self, opportunity: MarketOpportunity, deposit: float
+        self,
+        opportunity: MarketOpportunity,
+        deposit: float,
+        *,
+        bet_usd: float | None = None,
     ) -> Trade | None:
-        bet_usd = self.calculate_bet_size(deposit)
+        if bet_usd is None:
+            bet_usd = self.calculate_bet_size(deposit)
         if bet_usd < self.config.trading.min_bet_usd:
             logger.info("Bet size $%.2f below minimum, skipping", bet_usd)
             return None

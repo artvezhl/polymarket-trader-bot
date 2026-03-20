@@ -125,13 +125,18 @@ class BtcStrategy:
     async def run(self) -> None:
         self._running = True
         interval = self.config.strategy.update_interval_ms / 1000.0
+        mode = self.config.strategy.mode
         logger.info(
-            "BTC strategy started (%.0fms interval)", interval * 1000
+            "Strategy started: mode=%s (%.0fms interval)",
+            mode,
+            interval * 1000,
         )
 
         while self._running:
             try:
-                if self.feed.is_ready:
+                if mode == "btc_eth_95_limit":
+                    await self._cycle_95_limit()
+                elif self.feed.is_ready:
                     await self._cycle()
             except Exception as e:
                 logger.error("Strategy cycle error: %s", e)
@@ -139,6 +144,104 @@ class BtcStrategy:
 
     async def stop(self) -> None:
         self._running = False
+
+    async def _cycle_95_limit(self) -> None:
+        markets = await self.find_crypto_5m_markets(
+            ["btc-updown-5m", "eth-updown-5m"]
+        )
+        if not markets:
+            return
+
+        cfg = self.config.strategy
+        limit_price = cfg.limit_price
+        min_fav = cfg.min_favorite_price
+
+        balance = await self.executor.get_polymarket_balance()
+        open_trades = await self.db.get_open_trades()
+        open_market_ids = {t.market_id for t in open_trades}
+        total_exposure = sum(t.bet_usd for t in open_trades)
+        max_exposure = balance * cfg.max_exposure_pct if balance > 0 else 0
+
+        for market in markets:
+            if market.time_left < 10 or market.time_left > 300:
+                continue
+            if market.condition_id in open_market_ids:
+                continue
+            if total_exposure >= max_exposure:
+                break
+
+            favorite_side, favorite_price, favorite_token = None, 0.0, ""
+            if market.up_price >= min_fav and market.up_price >= market.down_price:
+                favorite_side, favorite_price, favorite_token = (
+                    "Up",
+                    market.up_price,
+                    market.up_token_id,
+                )
+            elif market.down_price >= min_fav:
+                favorite_side, favorite_price, favorite_token = (
+                    "Down",
+                    market.down_price,
+                    market.down_token_id,
+                )
+            if not favorite_side:
+                continue
+
+            cooldown_until = self._failed_markets.get(market.condition_id, 0)
+            if time.time() < cooldown_until:
+                continue
+
+            from trading.scanner import MarketOpportunity
+
+            rounded_limit = self.executor._round_to_tick(
+                limit_price, market.tick_size
+            )
+            if rounded_limit <= 0 or rounded_limit >= 1:
+                continue
+
+            bet_usd = round(balance * cfg.trade_size_pct, 2)
+            bet_usd = max(bet_usd, 1.0)
+            if bet_usd > balance * cfg.max_exposure_pct:
+                continue
+
+            opp = MarketOpportunity(
+                market_id=market.condition_id,
+                question=market.question,
+                probability=rounded_limit,
+                outcome=favorite_side,
+                token_id=favorite_token,
+                liquidity=0,
+                end_date=None,
+                category="crypto",
+                tick_size=market.tick_size,
+                neg_risk=market.neg_risk,
+            )
+
+            trade = await self.executor.execute_trade(
+                opp, balance, bet_usd=bet_usd
+            )
+            if trade:
+                total_exposure += trade.bet_usd
+                open_market_ids.add(market.condition_id)
+                msg = (
+                    f"📊 *Limit 0.95:*\n"
+                    f"Рынок: _{market.question[:50]}_\n"
+                    f"Фаворит: *{favorite_side}* (mkt {favorite_price:.2f}) "
+                    f"→ лимит {rounded_limit:.2f}\n"
+                    f"Ставка: ${trade.bet_usd:.2f}"
+                )
+                await self._notify(msg)
+                logger.info(
+                    "Limit 0.95: %s %s mkt=%.2f limit=%.2f bet=$%.2f",
+                    favorite_side,
+                    market.question[:40],
+                    favorite_price,
+                    rounded_limit,
+                    trade.bet_usd,
+                )
+            else:
+                self._failed_markets[market.condition_id] = (
+                    time.time() + self._fail_cooldown
+                )
 
     async def _cycle(self) -> None:
         markets = await self.find_active_markets()
@@ -466,7 +569,9 @@ class BtcStrategy:
                     hedge_trade.bet_usd,
                 )
 
-    async def find_active_markets(self) -> list[BtcMarket]:
+    async def find_crypto_5m_markets(
+        self, base_slugs: list[str]
+    ) -> list[BtcMarket]:
         results: list[BtcMarket] = []
         now = int(time.time())
         base_ts = (now // MARKET_INTERVAL) * MARKET_INTERVAL
@@ -477,8 +582,8 @@ class BtcStrategy:
         try:
             async with aiohttp.ClientSession() as session:
 
-                async def _fetch_event(ts: int) -> None:
-                    slug = f"btc-updown-5m-{ts}"
+                async def _fetch_event(base_slug: str, ts: int) -> None:
+                    slug = f"{base_slug}-{ts}"
                     try:
                         async with session.get(
                             f"{GAMMA_API}/events",
@@ -567,15 +672,27 @@ class BtcStrategy:
                     except Exception:
                         pass
 
-                await asyncio.gather(
-                    *[
-                        _fetch_event(base_ts + i * MARKET_INTERVAL)
-                        for i in range(-1, 12)
-                    ]
-                )
+                tasks = []
+                for base_slug in base_slugs:
+                    for i in range(-1, 12):
+                        tasks.append(
+                            _fetch_event(
+                                base_slug, base_ts + i * MARKET_INTERVAL
+                            )
+                        )
+                await asyncio.gather(*tasks)
 
         except Exception as e:
-            logger.error("Failed to find BTC markets: %s", e)
+            logger.error("Failed to find crypto 5m markets: %s", e)
 
         results.sort(key=lambda m: m.time_left)
         return results
+
+    async def find_active_markets(self) -> list[BtcMarket]:
+        """Crypto 5m markets for current mode. btc_5min: BTC only; btc_eth_95_limit: BTC+ETH."""
+        slugs = (
+            ["btc-updown-5m", "eth-updown-5m"]
+            if self.config.strategy.mode == "btc_eth_95_limit"
+            else ["btc-updown-5m"]
+        )
+        return await self.find_crypto_5m_markets(slugs)
