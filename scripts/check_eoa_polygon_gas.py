@@ -1,7 +1,8 @@
 """Проверка: адрес EOA из PRIVATE_KEY и нативный баланс POL на Polygon (газ).
 
 Запуск (из корня репо): python scripts/check_eoa_polygon_gas.py
-В Docker: docker compose -f docker-compose.dev.yml --profile dev --env-file .env run --rm dev python scripts/check_eoa_polygon_gas.py
+В Docker: docker compose -f docker-compose.dev.yml --profile dev --env-file .env run --rm dev
+  python scripts/check_eoa_polygon_gas.py
 """
 
 from __future__ import annotations

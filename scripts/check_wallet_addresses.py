@@ -2,7 +2,8 @@
 """Проверка EOA и proxy (Safe) адресов для Polymarket.
 
 Запуск: python scripts/check_wallet_addresses.py
-Docker: docker compose -f docker-compose.dev.yml --profile dev --env-file .env run --rm dev python scripts/check_wallet_addresses.py
+Docker: docker compose -f docker-compose.dev.yml --profile dev --env-file .env run --rm dev
+  python scripts/check_wallet_addresses.py
 """
 
 from __future__ import annotations

@@ -4,7 +4,8 @@
 Запуск: python scripts/check_positions.py [адрес]
   Без аргумента — берёт POLYMARKET_PROXY_ADDRESS из .env
 
-Docker: docker compose -f docker-compose.dev.yml --profile dev --env-file .env run --rm dev python scripts/check_positions.py
+Docker: docker compose -f docker-compose.dev.yml --profile dev --env-file .env run --rm dev
+  python scripts/check_positions.py
 """
 import os
 import sys

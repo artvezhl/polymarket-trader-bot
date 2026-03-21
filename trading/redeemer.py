@@ -242,7 +242,7 @@ class Redeemer:
         return out
 
     def _log_redeem_settlement(self, receipt: Any, recipient: str, ctx: str) -> None:
-        """Объясняет успешный tx: CTF payout и/или USDC Transfer (payout=0 → без Transfer — норма)."""
+        """Объясняет успешный tx: CTF payout и/или USDC Transfer (payout=0 → без Transfer — ок)."""
         payouts = self._ctf_payout_redemptions_in_receipt(receipt)
         usdc_raw = self._usdc_e_payout_to_in_receipt(receipt, recipient)
         for cid_hex, pay in payouts:
@@ -441,7 +441,7 @@ class Redeemer:
         return RedeemResult(hex_hash, True, "")
 
     def check_eoa_pays_gas(self) -> str | None:
-        """Газ за raw tx платит только EOA из PRIVATE_KEY; баланс Safe/proxy для этого не используется."""
+        """Газ за raw tx платит только EOA из PRIVATE_KEY; Safe/proxy не используется."""
         addr = self.account.address
         bal = self.w3.eth.get_balance(addr)
         _ui_short = (
@@ -450,7 +450,8 @@ class Redeemer:
         )
         if bal == 0:
             logger.warning(
-                "Gas check: EOA %s native balance 0 on Polygon (RPC gas payer is PRIVATE_KEY, not Safe)",
+                "Gas check: EOA %s native balance 0 on Polygon "
+                "(RPC gas payer is PRIVATE_KEY, not Safe)",
                 addr,
             )
             return (
@@ -466,7 +467,7 @@ class Redeemer:
                 need = float(self.w3.from_wei(est_wei, "ether"))
                 have = float(self.w3.from_wei(bal, "ether"))
                 return (
-                    f"Мало POL для газа на {addr}: нужно ~{need:.4f} за типичную tx, есть {have:.6f}."
+                    f"Мало POL на {addr}: нужно ~{need:.4f} за tx, есть {have:.6f}."
                     + _ui_short
                 )
         except Exception:

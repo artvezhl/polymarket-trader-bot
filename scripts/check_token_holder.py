@@ -6,7 +6,8 @@ condition_id на EOA и Proxy. Если токены на Proxy — нужны 
 и POLYMARKET_PROXY_ADDRESS.
 
 Запуск: python scripts/check_token_holder.py
-Docker: docker compose -f docker-compose.dev.yml --profile dev --env-file .env run --rm dev python scripts/check_token_holder.py
+Docker: docker compose -f docker-compose.dev.yml --profile dev --env-file .env run --rm dev
+  python scripts/check_token_holder.py
 """
 
 from __future__ import annotations
@@ -60,8 +61,8 @@ def main() -> None:
     )
 
     async def run() -> None:
-        from trading.executor import TradeExecutor
         from database.db import Database
+        from trading.executor import TradeExecutor
 
         db = Database()
         await db.connect()
@@ -132,7 +133,8 @@ def main() -> None:
                     total = b_yes + b_no
                     if b_api:
                         total = max(total, b_api)
-                    print(f"  {label}: API_tid={b_api}  yes={b_yes}  no={b_no}  → токены={'да' if total else 'нет'}")
+                    tok = "да" if total else "нет"
+                    print(f"  {label}: API_tid={b_api}  yes={b_yes}  no={b_no}  → токены={tok}")
                 print()
 
             if checked == 0:
