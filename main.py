@@ -18,7 +18,7 @@ from bot.notifications import (
 from bot.telegram_bot import TelegramBot
 from database.db import Database
 from trading.btc_feed import BtcFeed
-from trading.btc_strategy import BtcStrategy
+from trading.btc_strategy import BtcStrategy, _debug_log
 from trading.executor import TradeExecutor
 from trading.portfolio import PortfolioManager
 from trading.redeemer import Redeemer, redeem_all_pending
@@ -205,6 +205,14 @@ class TradingEngine:
         await asyncio.sleep(5)
         while not self._shutdown.is_set():
             try:
+                # #region agent log
+                _debug_log(
+                    "main.py:_btc_strategy_loop",
+                    "loop iteration",
+                    {"is_trading": self.tg_bot.is_trading},
+                    "H0",
+                )
+                # #endregion
                 if self.tg_bot.is_trading:
                     await self.btc_strategy.run()
             except Exception as e:

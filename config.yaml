@@ -11,7 +11,7 @@ trading:
   price_check_interval_sec: 120
   price_spike_multiplier: 10.0
   sync_interval_sec: 120
-  redeem_interval_sec: 0
+  redeem_interval_sec: 180
   watch_poll_interval_sec: 60
 
 strategy:
@@ -22,7 +22,7 @@ strategy:
   update_interval_ms: 500
   volatility_window_sec: 60
   momentum_window_ticks: 20
-  max_exposure_pct: 0.10
+  max_exposure_pct: 0.30
   trade_size_pct: 0.03
   kelly_fraction: 0.25
   late_market_sec: 25

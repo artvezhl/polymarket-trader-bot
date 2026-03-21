@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 import aiohttp
 
@@ -23,6 +25,24 @@ from utils.logger import logger
 
 GAMMA_API = "https://gamma-api.polymarket.com"
 MARKET_INTERVAL = 300
+DEBUG_LOG_PATH = str(Path(__file__).resolve().parent.parent / "debug-strategy.log")
+
+
+def _debug_log(location: str, message: str, data: dict, hypothesis_id: str = "") -> None:
+    try:
+        payload = {
+            "sessionId": "1fd410",
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        if hypothesis_id:
+            payload["hypothesisId"] = hypothesis_id
+        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 
 @dataclass
@@ -67,6 +87,7 @@ class BtcStrategy:
         self._failed_markets: dict[str, float] = {}
         self._failed_closes: dict[int, float] = {}
         self._fail_cooldown = 60
+        self._fail_cooldown_95 = 15
         self.auto_close_enabled = False
         self.take_profit_pct = config.strategy.take_profit_pct
         self.stop_loss_pct = config.strategy.stop_loss_pct
@@ -75,6 +96,7 @@ class BtcStrategy:
         self.hedge_ratio = 0.5
         self.reverse_signal = False
         self._hedged_trades: set[int] = set()
+        self._confirmed_cycles: dict[str, int] = {}
 
     async def load_settings(self) -> None:
         """Load strategy settings from DB."""
@@ -123,6 +145,14 @@ class BtcStrategy:
                 pass
 
     async def run(self) -> None:
+        # #region agent log
+        _debug_log(
+            "btc_strategy.py:run",
+            "strategy run() entered",
+            {"mode": self.config.strategy.mode},
+            "H0",
+        )
+        # #endregion
         self._running = True
         interval = self.config.strategy.update_interval_ms / 1000.0
         mode = self.config.strategy.mode
@@ -146,9 +176,21 @@ class BtcStrategy:
         self._running = False
 
     async def _cycle_95_limit(self) -> None:
+        # #region agent log
+        _debug_log("btc_strategy.py:_cycle_95_limit:entry", "cycle_95_limit entered", {}, "H0")
+        # #endregion
         markets = await self.find_crypto_5m_markets(
             ["btc-updown-5m", "eth-updown-5m"]
         )
+        await self._refresh_market_prices_from_clob(markets)
+        # #region agent log
+        _debug_log(
+            "btc_strategy.py:_cycle_95_limit:start",
+            "cycle_95_limit",
+            {"markets_count": len(markets)},
+            "H2",
+        )
+        # #endregion
         if not markets:
             return
 
@@ -162,10 +204,69 @@ class BtcStrategy:
         total_exposure = sum(t.bet_usd for t in open_trades)
         max_exposure = balance * cfg.max_exposure_pct if balance > 0 else 0
 
+        # #region agent log
+        sample = (
+            {
+                "up": markets[0].up_price,
+                "down": markets[0].down_price,
+                "time_left": round(markets[0].time_left, 1),
+            }
+            if markets
+            else {}
+        )
+        _debug_log(
+            "btc_strategy.py:_cycle_95_limit:state",
+            "state",
+            {
+                "balance": balance,
+                "min_fav": min_fav,
+                "total_exposure": total_exposure,
+                "max_exposure": max_exposure,
+                "open_market_ids": list(open_market_ids),
+                "sample_clob_prices": sample,
+            },
+            "H2,H4",
+        )
+        # #endregion
+
+        LAST_MINUTE_SEC = 60
+        CONFIRM_CYCLES = 3
+
         for market in markets:
-            if market.time_left < 10 or market.time_left > 300:
+            if market.time_left < 10 or market.time_left > LAST_MINUTE_SEC:
+                self._confirmed_cycles.pop(market.condition_id, None)
+                # #region agent log
+                if market.up_price >= 0.85 or market.down_price >= 0.85:
+                    _debug_log(
+                        "btc_strategy.py:_cycle_95_limit:skip_time",
+                        "skip: time_left",
+                        {
+                            "condition_id": market.condition_id[:20],
+                            "up_price": market.up_price,
+                            "down_price": market.down_price,
+                            "time_left": round(market.time_left, 1),
+                            "min_fav": min_fav,
+                            "up_ge_min": market.up_price >= min_fav,
+                            "down_ge_min": market.down_price >= min_fav,
+                        },
+                        "H2,H3",
+                    )
+                # #endregion
                 continue
             if market.condition_id in open_market_ids:
+                # #region agent log
+                if market.up_price >= 0.85 or market.down_price >= 0.85:
+                    _debug_log(
+                        "btc_strategy.py:_cycle_95_limit:skip_open",
+                        "skip: already open",
+                        {
+                            "condition_id": market.condition_id[:20],
+                            "up_price": market.up_price,
+                            "down_price": market.down_price,
+                        },
+                        "H4",
+                    )
+                # #endregion
                 continue
             if total_exposure >= max_exposure:
                 break
@@ -183,11 +284,58 @@ class BtcStrategy:
                     market.down_price,
                     market.down_token_id,
                 )
+
+            # #region agent log
+            if market.up_price >= 0.85 or market.down_price >= 0.85:
+                _debug_log(
+                    "btc_strategy.py:_cycle_95_limit:favorite_check",
+                    "favorite_check",
+                    {
+                        "condition_id": market.condition_id[:20],
+                        "up_price": market.up_price,
+                        "down_price": market.down_price,
+                        "min_fav": min_fav,
+                        "favorite_side": favorite_side,
+                        "up_ge_min": market.up_price >= min_fav,
+                        "down_ge_min": market.down_price >= min_fav,
+                        "up_ge_down": market.up_price >= market.down_price,
+                    },
+                    "H1,H3",
+                )
+            # #endregion
+
             if not favorite_side:
+                self._confirmed_cycles.pop(market.condition_id, None)
+                continue
+
+            confirmed = self._confirmed_cycles.get(market.condition_id, 0) + 1
+            self._confirmed_cycles[market.condition_id] = confirmed
+            if confirmed < CONFIRM_CYCLES:
+                # #region agent log
+                _debug_log(
+                    "btc_strategy.py:_cycle_95_limit:skip_confirm",
+                    "skip: need 3 cycles",
+                    {
+                        "condition_id": market.condition_id[:20],
+                        "confirmed": confirmed,
+                        "need": CONFIRM_CYCLES,
+                        "favorite_side": favorite_side,
+                    },
+                    "H4",
+                )
+                # #endregion
                 continue
 
             cooldown_until = self._failed_markets.get(market.condition_id, 0)
             if time.time() < cooldown_until:
+                # #region agent log
+                _debug_log(
+                    "btc_strategy.py:_cycle_95_limit:skip_cooldown",
+                    "skip: cooldown",
+                    {"condition_id": market.condition_id[:20]},
+                    "H4",
+                )
+                # #endregion
                 continue
 
             from trading.scanner import MarketOpportunity
@@ -216,10 +364,34 @@ class BtcStrategy:
                 neg_risk=market.neg_risk,
             )
 
+            # #region agent log
+            _debug_log(
+                "btc_strategy.py:_cycle_95_limit:before_execute",
+                "calling execute_trade",
+                {
+                    "condition_id": market.condition_id[:20],
+                    "outcome": favorite_side,
+                    "bet_usd": bet_usd,
+                },
+                "H5",
+            )
+            # #endregion
+
             trade = await self.executor.execute_trade(
                 opp, balance, bet_usd=bet_usd
             )
+
+            # #region agent log
+            _debug_log(
+                "btc_strategy.py:_cycle_95_limit:after_execute",
+                "execute_trade result",
+                {"trade_created": trade is not None},
+                "H5",
+            )
+            # #endregion
+
             if trade:
+                self._confirmed_cycles.pop(market.condition_id, None)
                 total_exposure += trade.bet_usd
                 open_market_ids.add(market.condition_id)
                 msg = (
@@ -239,8 +411,9 @@ class BtcStrategy:
                     trade.bet_usd,
                 )
             else:
+                self._confirmed_cycles.pop(market.condition_id, None)
                 self._failed_markets[market.condition_id] = (
-                    time.time() + self._fail_cooldown
+                    time.time() + self._fail_cooldown_95
                 )
 
     async def _cycle(self) -> None:
@@ -568,6 +741,67 @@ class BtcStrategy:
                     hedge_side,
                     hedge_trade.bet_usd,
                 )
+
+    def _extract_price(self, level) -> float:
+        """Извлечь цену из уровня order book (объект/dict/список)."""
+        if hasattr(level, "price"):
+            return float(level.price)
+        if isinstance(level, (list, tuple)) and len(level) >= 1:
+            return float(level[0])
+        if isinstance(level, dict):
+            return float(level.get("price", 0))
+        return 0.0
+
+    async def _refresh_market_prices_from_clob(
+        self, markets: list[BtcMarket]
+    ) -> None:
+        """Обновить up_price/down_price из CLOB (midpoint = как в UI Polymarket)."""
+        for market in markets:
+            try:
+                for token_id, attr in [
+                    (market.up_token_id, "up_price"),
+                    (market.down_token_id, "down_price"),
+                ]:
+                    price = 0.0
+                    try:
+                        mid = await asyncio.to_thread(
+                            self.executor.client.get_midpoint, token_id
+                        )
+                        if mid:
+                            p = mid.get("mid", mid.mid) if isinstance(mid, dict) else getattr(mid, "mid", None)
+                            if p is not None:
+                                price = float(p)
+                    except Exception:
+                        pass
+                    if not (0 < price < 1):
+                        try:
+                            book = await asyncio.to_thread(
+                                self.executor.client.get_order_book, token_id
+                            )
+                            asks = getattr(book, "asks", []) or (book.get("asks", []) if isinstance(book, dict) else [])
+                            if asks:
+                                prices = [self._extract_price(a) for a in asks]
+                                valid = [p for p in prices if 0 < p < 1]
+                                best_ask = min(valid) if valid else 0.0
+                                if best_ask > 0:
+                                    price = best_ask
+                        except Exception:
+                            pass
+                    if not (0 < price < 1):
+                        try:
+                            lp = await asyncio.to_thread(
+                                self.executor.client.get_last_trade_price, token_id
+                            )
+                            if lp:
+                                p = lp.get("price", getattr(lp, "price", None))
+                                if p is not None:
+                                    price = float(p)
+                        except Exception:
+                            pass
+                    if 0 < price < 1:
+                        setattr(market, attr, price)
+            except Exception:
+                pass
 
     async def find_crypto_5m_markets(
         self, base_slugs: list[str]

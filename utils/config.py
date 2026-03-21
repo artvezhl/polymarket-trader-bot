@@ -41,7 +41,7 @@ class StrategyConfig:
     update_interval_ms: int = 500
     volatility_window_sec: int = 60
     momentum_window_ticks: int = 20
-    max_exposure_pct: float = 0.10
+    max_exposure_pct: float = 0.30
     trade_size_pct: float = 0.03
     kelly_fraction: float = 0.25
     late_market_sec: int = 25

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
+import time
 from datetime import datetime
+from pathlib import Path as _Path
 
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import (
@@ -21,6 +24,24 @@ from trading.clob_account import ClobTradesFetch, fetch_all_clob_trades
 from trading.scanner import MarketOpportunity
 from utils.config import AppConfig
 from utils.logger import logger
+
+DEBUG_LOG_PATH = str(_Path(__file__).resolve().parent.parent / "debug-strategy.log")
+
+
+def _exec_debug(reason: str, data: dict) -> None:
+    try:
+        payload = {
+            "sessionId": "1fd410",
+            "location": "executor.py:execute_trade",
+            "message": reason,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+            "hypothesisId": "H5",
+        }
+        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 
 class TradeExecutor:
@@ -162,18 +183,39 @@ class TradeExecutor:
             bet_usd = self.calculate_bet_size(deposit)
         if bet_usd < self.config.trading.min_bet_usd:
             logger.info("Bet size $%.2f below minimum, skipping", bet_usd)
+            _exec_debug("reject: bet below min", {"bet_usd": bet_usd, "min_bet": self.config.trading.min_bet_usd})
             return None
 
         price = self._round_to_tick(
             opportunity.probability, opportunity.tick_size
         )
         if price <= 0:
+            _exec_debug("reject: price<=0", {"price": price})
             return None
 
-        min_shares = math.ceil(1.0 / price)
+        max_bet = deposit * self.config.strategy.max_exposure_pct
+        min_order_size = await self._get_min_order_size(opportunity.token_id)
+        min_shares = max(1, int(min_order_size))
         shares = max(math.floor(bet_usd / price), min_shares)
         bet_usd = round(shares * price, 2)
-        if bet_usd > deposit * self.config.strategy.max_exposure_pct:
+        if bet_usd > max_bet:
+            shares = max(min_shares, math.floor(max_bet / price))
+            bet_usd = round(shares * price, 2)
+        if bet_usd > max_bet:
+            _exec_debug(
+                "reject: exposure",
+                {
+                    "bet_usd": bet_usd,
+                    "max_bet": max_bet,
+                    "min_shares": min_shares,
+                    "reason": "min_order_size forces bet > max_exposure",
+                },
+            )
+            return None
+        min_ok = bet_usd >= self.config.trading.min_bet_usd or (shares >= 1 and bet_usd >= price)
+        if not min_ok:
+            logger.info("Bet size $%.2f below minimum, skipping", bet_usd)
+            _exec_debug("reject: bet below min", {"bet_usd": bet_usd, "min_bet": self.config.trading.min_bet_usd})
             return None
         potential_payout = shares
 
@@ -202,6 +244,7 @@ class TradeExecutor:
                     opportunity.question[:50],
                     resp,
                 )
+                _exec_debug("reject: API error", {"resp": str(resp)[:200]})
                 return None
 
             order_id = resp.get("orderID", resp.get("id", ""))
@@ -238,7 +281,23 @@ class TradeExecutor:
 
         except Exception as e:
             logger.error("Trade execution failed for %s: %s", opportunity.question[:50], e)
+            _exec_debug("reject: exception", {"error": str(e)[:200]})
             return None
+
+    async def _get_min_order_size(self, token_id: str) -> float:
+        """Получить min_order_size из order book (Polymarket требует минимум shares)."""
+        try:
+            book = await asyncio.to_thread(
+                self.client.get_order_book, token_id
+            )
+            raw = getattr(book, "min_order_size", None)
+            if raw is None and isinstance(book, dict):
+                raw = book.get("min_order_size", 1)
+            if raw is not None:
+                return float(raw)
+        except Exception:
+            pass
+        return 1.0
 
     async def _get_fee_rate(self, token_id: str) -> float:
         try:
