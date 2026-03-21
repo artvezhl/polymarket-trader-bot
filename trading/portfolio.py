@@ -76,7 +76,9 @@ class PortfolioManager:
                         pnl = trade.potential_payout - trade.bet_usd if won else -trade.bet_usd
                         status = TradeStatus.WON if won else TradeStatus.LOST
 
-                        await self.db.update_trade_status(trade.id, status, pnl)  # type: ignore[arg-type]
+                        await self.db.update_trade_status(
+                            trade.id, status, pnl
+                        )  # type: ignore[arg-type]
 
                         resolved.append({
                             "trade": trade,

@@ -11,8 +11,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.config import load_config
 from trading.redeemer import Redeemer
+from utils.config import load_config
 
 
 def main() -> None:

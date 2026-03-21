@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-import urllib.request
 import json
+import urllib.request
 
 CONDITION_IDS = [
     "0x01e18fb46daf1c2707b971c766f537daa9bf29930d8750f1b1a046c6bc679a3c",

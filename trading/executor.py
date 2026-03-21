@@ -183,7 +183,10 @@ class TradeExecutor:
             bet_usd = self.calculate_bet_size(deposit)
         if bet_usd < self.config.trading.min_bet_usd:
             logger.info("Bet size $%.2f below minimum, skipping", bet_usd)
-            _exec_debug("reject: bet below min", {"bet_usd": bet_usd, "min_bet": self.config.trading.min_bet_usd})
+            _exec_debug(
+                "reject: bet below min",
+                {"bet_usd": bet_usd, "min_bet": self.config.trading.min_bet_usd},
+            )
             return None
 
         price = self._round_to_tick(
@@ -215,7 +218,10 @@ class TradeExecutor:
         min_ok = bet_usd >= self.config.trading.min_bet_usd or (shares >= 1 and bet_usd >= price)
         if not min_ok:
             logger.info("Bet size $%.2f below minimum, skipping", bet_usd)
-            _exec_debug("reject: bet below min", {"bet_usd": bet_usd, "min_bet": self.config.trading.min_bet_usd})
+            _exec_debug(
+                "reject: bet below min",
+                {"bet_usd": bet_usd, "min_bet": self.config.trading.min_bet_usd},
+            )
             return None
         potential_payout = shares
 

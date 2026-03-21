@@ -445,7 +445,8 @@ class Redeemer:
         addr = self.account.address
         bal = self.w3.eth.get_balance(addr)
         _ui_short = (
-            " Веб Polymarket = gasless relayer. Бот шлёт tx в Polygon RPC сам — см. gasless в docs.polymarket.com."
+            " Веб Polymarket = gasless relayer. Бот шлёт tx в Polygon RPC сам — "
+            "см. gasless в docs.polymarket.com."
         )
         if bal == 0:
             logger.warning(
@@ -454,7 +455,8 @@ class Redeemer:
             )
             return (
                 f"На адресе подписанта {addr} сеть Polygon показывает 0 POL для газа. "
-                "Пополните именно этот адрес (из PRIVATE_KEY), не только Safe/proxy: газ платит EOA, не кошелёк Polymarket."
+                "Пополните именно этот адрес (из PRIVATE_KEY), не только Safe/proxy: "
+                "газ платит EOA, не кошелёк Polymarket."
                 + _ui_short
             )
         try:
@@ -582,7 +584,7 @@ class Redeemer:
         v = signed.v
         if v < 27:
             v += 27
-            
+
         logger.debug(
             "Safe sig: r=%s s=%s v=%s",
             signed.r, signed.s, v

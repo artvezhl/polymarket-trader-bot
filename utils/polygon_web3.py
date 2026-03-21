@@ -1,4 +1,4 @@
-"""Polygon (Bor) blocks имеют длинный extraData — без POA middleware web3 падает с ExtraDataLengthError."""
+"""Polygon (Bor) blocks: длинный extraData — без POA middleware web3 падает с ExtraDataLengthError."""
 
 from __future__ import annotations
 

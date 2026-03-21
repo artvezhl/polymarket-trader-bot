@@ -15,9 +15,9 @@ from telegram.ext import (
 from bot.notifications import (
     SCAN_PAGE_SIZE,
     format_clob_positions_list,
-    format_data_api_positions,
     format_close_list,
     format_close_result,
+    format_data_api_positions,
     format_history,
     format_pnl,
     format_positions_list,
@@ -716,7 +716,9 @@ class TelegramBot:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         if not self.btc_strategy:
-            await update.message.reply_text("❌ Стратегия не инициализирована")  # type: ignore[union-attr]
+            await update.message.reply_text(
+                "❌ Стратегия не инициализирована"
+            )  # type: ignore[union-attr]
             return
 
         self.btc_strategy.auto_close_enabled = (
@@ -737,7 +739,9 @@ class TelegramBot:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         if not self.btc_strategy:
-            await update.message.reply_text("❌ Стратегия не инициализирована")  # type: ignore[union-attr]
+            await update.message.reply_text(
+                "❌ Стратегия не инициализирована"
+            )  # type: ignore[union-attr]
             return
 
         cur = self.btc_strategy.take_profit_pct
@@ -769,7 +773,9 @@ class TelegramBot:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         if not self.btc_strategy:
-            await update.message.reply_text("❌ Стратегия не инициализирована")  # type: ignore[union-attr]
+            await update.message.reply_text(
+                "❌ Стратегия не инициализирована"
+            )  # type: ignore[union-attr]
             return
 
         cur = self.btc_strategy.stop_loss_pct
@@ -801,7 +807,9 @@ class TelegramBot:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         if not self.btc_strategy:
-            await update.message.reply_text("❌ Стратегия не инициализирована")  # type: ignore[union-attr]
+            await update.message.reply_text(
+                "❌ Стратегия не инициализирована"
+            )  # type: ignore[union-attr]
             return
 
         self.btc_strategy.reverse_signal = (
@@ -823,7 +831,9 @@ class TelegramBot:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         if not self.btc_strategy:
-            await update.message.reply_text("❌ Стратегия не инициализирована")  # type: ignore[union-attr]
+            await update.message.reply_text(
+                "❌ Стратегия не инициализирована"
+            )  # type: ignore[union-attr]
             return
 
         self.btc_strategy.hedge_enabled = (
@@ -845,7 +855,9 @@ class TelegramBot:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         if not self.btc_strategy:
-            await update.message.reply_text("❌ Стратегия не инициализирована")  # type: ignore[union-attr]
+            await update.message.reply_text(
+                "❌ Стратегия не инициализирована"
+            )  # type: ignore[union-attr]
             return
 
         if not context.args or len(context.args) < 2:

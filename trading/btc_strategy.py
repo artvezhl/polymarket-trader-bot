@@ -768,7 +768,11 @@ class BtcStrategy:
                             self.executor.client.get_midpoint, token_id
                         )
                         if mid:
-                            p = mid.get("mid", mid.mid) if isinstance(mid, dict) else getattr(mid, "mid", None)
+                            p = (
+                                mid.get("mid", mid.mid)
+                                if isinstance(mid, dict)
+                                else getattr(mid, "mid", None)
+                            )
                             if p is not None:
                                 price = float(p)
                     except Exception:
@@ -778,7 +782,9 @@ class BtcStrategy:
                             book = await asyncio.to_thread(
                                 self.executor.client.get_order_book, token_id
                             )
-                            asks = getattr(book, "asks", []) or (book.get("asks", []) if isinstance(book, dict) else [])
+                            asks = getattr(book, "asks", []) or (
+                                book.get("asks", []) if isinstance(book, dict) else []
+                            )
                             if asks:
                                 prices = [self._extract_price(a) for a in asks]
                                 valid = [p for p in prices if 0 < p < 1]

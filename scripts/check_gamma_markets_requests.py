@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Тот же запрос, но через requests (pip install requests)."""
-import json
 import sys
 
 try:
