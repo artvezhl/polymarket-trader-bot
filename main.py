@@ -80,6 +80,9 @@ class TradingEngine:
 
         await self.btc_strategy.load_settings()
         self.btc_strategy.set_notify(self.tg_bot.send_message)
+        self.btc_strategy.set_trading_enabled_getter(
+            lambda: self.tg_bot.is_trading
+        )
 
         tasks = [
             asyncio.create_task(self.btc_feed.start(), name="btc_feed"),

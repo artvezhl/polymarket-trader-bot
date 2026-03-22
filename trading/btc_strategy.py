@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 import aiohttp
 
@@ -97,6 +98,11 @@ class BtcStrategy:
         self.reverse_signal = False
         self._hedged_trades: set[int] = set()
         self._confirmed_cycles: dict[str, int] = {}
+        self._trading_enabled_getter: Callable[[], bool] = lambda: True
+
+    def set_trading_enabled_getter(self, getter: Callable[[], bool]) -> None:
+        """Вызывается перед run(); стратегия прервёт цикл, если getter() вернёт False."""
+        self._trading_enabled_getter = getter
 
     async def load_settings(self) -> None:
         """Load strategy settings from DB."""
@@ -162,7 +168,7 @@ class BtcStrategy:
             interval * 1000,
         )
 
-        while self._running:
+        while self._running and self._trading_enabled_getter():
             try:
                 if mode == "btc_eth_95_limit":
                     await self._cycle_95_limit()
@@ -170,17 +176,21 @@ class BtcStrategy:
                     await self._cycle()
             except Exception as e:
                 logger.error("Strategy cycle error: %s", e)
-            await asyncio.sleep(interval)
+            if self._running and self._trading_enabled_getter():
+                await asyncio.sleep(interval)
 
     async def stop(self) -> None:
         self._running = False
 
     async def _cycle_95_limit(self) -> None:
+        if not self._trading_enabled_getter():
+            return
         # #region agent log
         _debug_log("btc_strategy.py:_cycle_95_limit:entry", "cycle_95_limit entered", {}, "H0")
         # #endregion
         markets = await self.find_crypto_5m_markets(
-            ["btc-updown-5m", "eth-updown-5m"]
+            # ["btc-updown-5m", "eth-updown-5m"]
+            ["btc-updown-5m"]
         )
         await self._refresh_market_prices_from_clob(markets)
         # #region agent log
@@ -363,6 +373,9 @@ class BtcStrategy:
                 tick_size=market.tick_size,
                 neg_risk=market.neg_risk,
             )
+
+            if not self._trading_enabled_getter():
+                break
 
             # #region agent log
             _debug_log(
@@ -931,7 +944,8 @@ class BtcStrategy:
     async def find_active_markets(self) -> list[BtcMarket]:
         """Crypto 5m markets for current mode. btc_5min: BTC only; btc_eth_95_limit: BTC+ETH."""
         slugs = (
-            ["btc-updown-5m", "eth-updown-5m"]
+            ["btc-updown-5m"]
+            # ["btc-updown-5m", "eth-updown-5m"]
             if self.config.strategy.mode == "btc_eth_95_limit"
             else ["btc-updown-5m"]
         )
