@@ -71,6 +71,9 @@ jobs:
             POLYMARKET_API_PASSPHRASE=${POLYMARKET_API_PASSPHRASE}
             POLYGON_RPC_URL=${POLYGON_RPC_URL:-https://polygon-bor.publicnode.com}
             POLYMARKET_PROXY_ADDRESS=${POLYMARKET_PROXY_ADDRESS}
+            POLYMARKET_SIG_TYPE=${POLYMARKET_SIG_TYPE}
+            RELAYER_API_KEY=${RELAYER_API_KEY}
+            RELAYER_API_KEY_ADDRESS=${RELAYER_API_KEY_ADDRESS}
             EOF
 
             docker compose build --no-cache
